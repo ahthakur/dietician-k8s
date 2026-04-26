@@ -1,0 +1,64 @@
+# Dietician App - Helm Values
+
+replicaCount: 1
+
+image:
+  repository: dietician
+  pullPolicy: Never    # Use local Docker image, don't try to pull from a registry
+  tag: "v1"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+
+# Environment variables for the app
+env:
+  ANTHROPIC_API_KEY: "REPLACE_ME"
+
+# Service config: NodePort so we can access it from localhost
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 30080    # Access the app at localhost:30080
+
+# We don't need ingress for local
+ingress:
+  enabled: false
+
+httpRoute:
+  enabled: false
+
+# Health checks pointing to our API
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: http
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: http
+
+autoscaling:
+  enabled: false
+
+# Persistent storage for SQLite database
+persistence:
+  enabled: true
+  size: 1Gi
+
+volumes: []
+volumeMounts: []
+nodeSelector: {}
+tolerations: []
+affinity: {}
