@@ -1,6 +1,6 @@
 # Dietician App - Helm Values
 
-replicaCount: 1
+replicaCount: 2
 
 image:
   repository: dietician
