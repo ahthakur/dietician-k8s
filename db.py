@@ -458,6 +458,15 @@ def set_workout(user_id, log_date, time="", duration_min=45, label="", calories_
     conn.commit()
     conn.close()
 
+def get_workouts_range(user_id, start_date, end_date):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT log_date, calories_burned FROM workout_log WHERE user_id = ? AND log_date >= ? AND log_date <= ?",
+        (user_id, start_date, end_date),
+    ).fetchall()
+    conn.close()
+    return {r["log_date"]: r["calories_burned"] for r in rows}
+
 def delete_workout(user_id, log_date):
     conn = get_conn()
     conn.execute("DELETE FROM workout_log WHERE user_id = ? AND log_date = ?", (user_id, log_date))

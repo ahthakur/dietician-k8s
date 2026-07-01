@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from config import HOST, PORT, ANTHROPIC_API_KEY, WORKOUTS, SOCIAL_DAYS, SESSION_SECRET, SYNC_TOKEN
 from auth import login as auth_login, callback as auth_callback, me as auth_me, logout as auth_logout, require_auth
 from db import get_user, update_user_targets, update_user_timezone
-from db import get_workout, get_latest_workout, set_workout, delete_workout
+from db import get_workout, get_latest_workout, set_workout, delete_workout, get_workouts_range
 from db import (
     init_db, get_fridge_items, add_fridge_item, add_fridge_items_bulk,
     remove_fridge_item, remove_fridge_item_by_id, clear_fridge,
@@ -408,6 +408,23 @@ async def get_analysis(request: Request, days: int = 7):
     ref_date = get_client_date(request)
     history = get_food_log_history(user_id, days, reference_date=ref_date)
     targets = get_user_targets(user_id)
+
+    # Get workout calories for the date range
+    if history:
+        start = history[0]["log_date"]
+        end = history[-1]["log_date"]
+    else:
+        start = end = ref_date
+    workout_map = get_workouts_range(user_id, start, end)
+
+    # Add deficit data to each day
+    base_cal = targets["calories_max"]
+    for day in history:
+        wk_cal = workout_map.get(day["log_date"], 0)
+        day["workout_calories"] = wk_cal
+        day["adjusted_target"] = base_cal + wk_cal
+        day["deficit"] = day["total_cal"] - (base_cal + wk_cal)
+
     return {
         "user_id": user_id,
         "days": days,

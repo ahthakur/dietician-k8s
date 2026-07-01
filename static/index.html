@@ -463,6 +463,7 @@ ${time?`<span style="margin-left:auto;color:rgba(255,255,255,0.2)">${time}</span
 </div>
 <div class="tl-entry-actions">
 <button class="tl-action-btn" onclick="editEntry(${e.id},${e.calories},${e.protein},${e.fiber},'${(e.description||'').replace(/'/g,"\\'")}')">✏️ Edit</button>
+<button class="tl-action-btn" onclick="shareEntry('${(e.description||'').replace(/'/g,"\\'")}',${e.calories},${e.protein},${e.fiber})">📤 Share</button>
 <button class="tl-action-btn tl-del" onclick="deleteEntry(${e.id})">🗑 Delete</button>
 </div>
 </div>
@@ -504,12 +505,41 @@ points.forEach((p) => {const isOver = dataKey === 'total_cal' ? p.val > target :
 svg += `</svg></div>`;return svg}
 
 h += lineChart('CALORIES', 'total_cal', tg.calories, u.color, '');
+
+// Deficit line chart
+const hasDeficit = data.some(d => d.deficit !== undefined);
+if(hasDeficit){
+const W=460,H=180,PL=40,PR=10,PT=20,PB=30;
+const chartW=W-PL-PR,chartH=H-PT-PB;
+const deficits=data.map(d=>d.deficit||0);
+const maxAbs=Math.max(...deficits.map(d=>Math.abs(d)),200)*1.2;
+let svg=`<div class="chart-container"><div class="chart-title">CALORIE DEFICIT</div>`;
+svg+=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">`;
+for(let i=0;i<=4;i++){const y=PT+(chartH/4)*i;svg+=`<line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="rgba(255,255,255,0.04)"/>`}
+const zeroY=PT+chartH/2;
+svg+=`<line x1="${PL}" y1="${zeroY}" x2="${W-PR}" y2="${zeroY}" stroke="rgba(255,255,255,0.2)" stroke-dasharray="4,4"/>`;
+svg+=`<text x="${PL-4}" y="${zeroY+3}" fill="rgba(255,255,255,0.35)" font-size="9" text-anchor="end">0</text>`;
+const points=data.map((d,i)=>{
+const x=PL+(i/Math.max(data.length-1,1))*chartW;
+const deficit=d.deficit||0;
+const y=zeroY-(deficit/maxAbs)*(chartH/2);
+return{x,y,val:deficit,date:d.log_date}});
+if(points.length>1){let areaPath=`M ${points[0].x} ${points[0].y}`;points.slice(1).forEach(p=>{areaPath+=` L ${p.x} ${p.y}`});areaPath+=` L ${points[points.length-1].x} ${zeroY} L ${points[0].x} ${zeroY} Z`;svg+=`<path d="${areaPath}" fill="#4ADE80" opacity="0.08"/>`}
+if(points.length>1){let linePath=`M ${points[0].x} ${points[0].y}`;points.slice(1).forEach(p=>{linePath+=` L ${p.x} ${p.y}`});svg+=`<path d="${linePath}" fill="none" stroke="#4ADE80" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`}
+points.forEach(p=>{const color=p.val<=0?'#4ADE80':'#EF4444';svg+=`<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color}" stroke="#0A0A0F" stroke-width="2"/>`;svg+=`<text x="${p.x}" y="${p.y-10}" fill="${color}" font-size="9" text-anchor="middle">${p.val>0?'+':''}${p.val}</text>`;const dayLabel=new Date(p.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});svg+=`<text x="${p.x}" y="${H-6}" fill="rgba(255,255,255,0.3)" font-size="9" text-anchor="middle">${dayLabel}</text>`});
+svg+=`</svg></div>`;
+h+=svg}
+
 h += lineChart('PROTEIN', 'total_protein', tg.protein, '#4ADE80', 'g');
 h += lineChart('FIBER', 'total_fiber', tg.fiber, '#FBBF24', 'g');
 
 const avgCal=Math.round(data.reduce((s,d)=>s+d.total_cal,0)/data.length);
 const avgProt=Math.round(data.reduce((s,d)=>s+d.total_protein,0)/data.length);
 const avgFib=Math.round(data.reduce((s,d)=>s+d.total_fiber,0)/data.length);
+const totalDeficit=data.reduce((s,d)=>s+(d.deficit||0),0);
+const avgDeficit=Math.round(totalDeficit/data.length);
+const totalWkCal=data.reduce((s,d)=>s+(d.workout_calories||0),0);
+
 h+=`<div class="avg-card">
 <div class="avg-title">Averages (${data.length} days)</div>
 <div class="avg-row">
@@ -517,6 +547,20 @@ h+=`<div class="avg-card">
 <div class="avg-item"><span style="color:#4ADE80;text-shadow:0 0 20px rgba(74,222,128,0.2)">${avgProt}g</span><span> protein</span></div>
 <div class="avg-item"><span style="color:#FBBF24;text-shadow:0 0 20px rgba(251,191,36,0.2)">${avgFib}g</span><span> fiber</span></div>
 </div></div>`;
+
+if(hasDeficit){
+const defColor=totalDeficit<=0?'#4ADE80':'#EF4444';
+const lbsLost=(Math.abs(totalDeficit)/3500).toFixed(1);
+h+=`<div class="avg-card">
+<div class="avg-title">Deficit Summary</div>
+<div class="avg-row">
+<div class="avg-item"><span style="color:${defColor}">${avgDeficit>0?'+':''}${avgDeficit}</span><span> cal/day avg</span></div>
+<div class="avg-item"><span style="color:${defColor}">${totalDeficit>0?'+':''}${totalDeficit}</span><span> total</span></div>
+<div class="avg-item"><span style="color:#4ADE80">${totalWkCal}</span><span> workout cal</span></div>
+</div>
+<div style="text-align:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,0.5)">${totalDeficit<=0?`On track: ~${lbsLost} lbs deficit (3500 cal = 1 lb)`:`Over target by ${totalDeficit} cal`}</div>
+</div>`}
+
 return h}
 
 function renderFridge(){
@@ -704,6 +748,11 @@ document.getElementById("chatInput").value=`What should I make for ${meal} for $
 sendChat()}
 
 // ── Edit/Delete food entries ─────────────────────────
+function shareEntry(desc,cal,prot,fib){
+const text=`${desc}\n🔥 ${cal} cal · 💪 ${prot}g protein · 🌾 ${fib}g fiber`;
+if(navigator.share){navigator.share({text}).catch(()=>{})}
+else{navigator.clipboard.writeText(text).then(()=>toast("Copied to clipboard","rgba(74,222,128,0.9)")).catch(()=>{})}}
+
 async function deleteEntry(id){if(!confirm("Delete?"))return;await api(`/api/food-log/${id}`,{method:"DELETE"});await loadToday()}
 
 function editEntry(id,cal,prot,fib,desc){
