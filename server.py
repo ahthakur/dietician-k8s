@@ -11,6 +11,7 @@ import logging
 import base64
 from datetime import date, datetime, timedelta
 from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
 from fastapi.staticfiles import StaticFiles
@@ -18,15 +19,14 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 
-from config import HOST, PORT, ANTHROPIC_API_KEY, USERS, WORKOUTS, SOCIAL_DAYS, SESSION_SECRET
+from config import HOST, PORT, ANTHROPIC_API_KEY, WORKOUTS, SOCIAL_DAYS, SESSION_SECRET
 from auth import login as auth_login, callback as auth_callback, me as auth_me, logout as auth_logout, require_auth
-from db import get_user, update_user_targets
+from db import get_user, update_user_targets, update_user_timezone
 from db import (
     init_db, get_fridge_items, add_fridge_item, add_fridge_items_bulk,
-    remove_fridge_item, clear_fridge,
+    remove_fridge_item, remove_fridge_item_by_id, clear_fridge,
+    update_fridge_item,
     add_food_log_entry, get_food_log, delete_food_log_entry,
     update_food_log_entry, get_food_log_totals, get_food_log_history,
     check_food_log_for_keyword,
@@ -35,14 +35,11 @@ from db import (
     log_purchases_bulk, get_purchase_frequency,
     save_chat_message, get_chat_history,
 )
-from scheduler import generate_daily_reminders, check_and_send_reminders
 from meal_engine import process_chat_message, analyze_food_photo, analyze_fridge_photo, analyze_receipt_photo, generate_grocery_list
-from notifications import send_system_notification
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("dietician.server")
 
-scheduler = AsyncIOScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -50,18 +47,29 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized")
     if not ANTHROPIC_API_KEY:
         logger.warning("ANTHROPIC_API_KEY not set")
-    scheduler.add_job(check_and_send_reminders, CronTrigger(second=0), id="reminder_tick", replace_existing=True)
-    scheduler.start()
-    logger.info("Scheduler started")
-    await send_system_notification("Dietician Online", "Your personal dietician is running.")
     yield
-    scheduler.shutdown(wait=False)
 
 app = FastAPI(title="Personal Dietician", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# ─── Auth Routes ─────────────────────────────────────────
+
+# ── Timezone Helper ──────────────────────────────
+
+def get_client_date(request: Request, fallback: Optional[str] = None) -> str:
+    if fallback:
+        return fallback
+    tz_name = request.headers.get("X-Timezone")
+    if tz_name:
+        try:
+            tz = ZoneInfo(tz_name)
+            return str(datetime.now(tz).date())
+        except Exception:
+            pass
+    return str(date.today())
+
+
+# ── Auth Routes ──────────────────────────────────
 
 app.get("/auth/login")(auth_login)
 app.get("/auth/callback")(auth_callback)
@@ -69,7 +77,7 @@ app.get("/auth/me")(auth_me)
 app.get("/auth/logout")(auth_logout)
 
 
-# ─── Models ───────────────────────────────────────────────
+# ── Models ───────────────────────────────────────
 
 class ChatRequest(BaseModel):
     message: str
@@ -87,31 +95,55 @@ class UpdateFoodLogRequest(BaseModel):
     description: Optional[str] = None
     re_estimate: bool = False
 
+class BulkFridgeItem(BaseModel):
+    name: str
+    quantity: str = ""
+    category: str = "other"
 
-# ─── Helper: get user targets ────────────────────────────
+class BulkFridgeRequest(BaseModel):
+    items: List[BulkFridgeItem]
+    source: str = "manual"
+    store: str = ""
 
-def get_user_targets(user_id: str):
-    user = get_user(user_id)
-    if user:
-        return {
-            "calories_max": user["calories_max"],
-            "protein_target": user["protein_target"],
-            "fiber_target": user["fiber_target"],
-        }
-    fallback = USERS.get(user_id, USERS.get("you", {}))
-    return {
-        "calories_max": fallback.get("calories_max", 2000),
-        "protein_target": fallback.get("protein_target", 150),
-        "fiber_target": fallback.get("fiber_target", 30),
-    }
+class DirectFoodLogRequest(BaseModel):
+    date: str
+    description: str
+    calories: int
+    protein: int
+    fiber: int = 0
+    source: str = "photo"
 
-
-# ─── Profile ─────────────────────────────────────────────
+class UpdateFridgeItemRequest(BaseModel):
+    name: Optional[str] = None
+    quantity: Optional[str] = None
+    category: Optional[str] = None
 
 class UpdateProfileRequest(BaseModel):
     calories_max: int
     protein_target: int
     fiber_target: int
+
+
+# ── Helper: get user targets ────────────────────
+
+def get_user_targets(user_id: str):
+    user = get_user(user_id)
+    if user:
+        return {
+            "calories_min": user["calories_min"],
+            "calories_max": user["calories_max"],
+            "protein_target": user["protein_target"],
+            "fiber_target": user["fiber_target"],
+        }
+    return {
+        "calories_min": 1800,
+        "calories_max": 2000,
+        "protein_target": 150,
+        "fiber_target": 30,
+    }
+
+
+# ── Profile ──────────────────────────────────────
 
 @app.put("/api/profile")
 async def update_profile(req: UpdateProfileRequest, request: Request):
@@ -120,14 +152,14 @@ async def update_profile(req: UpdateProfileRequest, request: Request):
     return {"status": "updated"}
 
 
-# ─── Chat Endpoint (main interface) ──────────────────────
+# ── Chat Endpoint (main interface) ───────────────
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest, request: Request):
     user_id = require_auth(request)
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
-    log_date = req.date or str(date.today())
+    log_date = req.date or get_client_date(request)
 
     try:
         result = await process_chat_message(user_id, req.message, plan_date=date.fromisoformat(log_date))
@@ -164,28 +196,36 @@ async def chat(req: ChatRequest, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Health ───────────────────────────────────────────────
+# ── Health ───────────────────────────────────────
 
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "time": datetime.now().isoformat()}
 
 
-# ─── Today Summary ────────────────────────────────────────
+# ── Today Summary ────────────────────────────────
 
 @app.get("/api/today")
 async def get_today(request: Request, client_date: Optional[str] = None):
     user_id = require_auth(request)
-    today = client_date or str(date.today())
+    today = client_date or get_client_date(request)
     dow = date.fromisoformat(today).weekday()
     workout = WORKOUTS.get(dow)
     is_social = dow in SOCIAL_DAYS
     totals = get_food_log_totals(today, user_id)
     entries = get_food_log(today, user_id)
     targets = get_user_targets(user_id)
+
+    # Update stored timezone if sent
+    tz_name = request.headers.get("X-Timezone")
+    if tz_name:
+        user = get_user(user_id)
+        if user and user.get("timezone") != tz_name:
+            update_user_timezone(user_id, tz_name)
+
     return {
         "date": today,
-        "day_name": date.today().strftime("%A"),
+        "day_name": date.fromisoformat(today).strftime("%A"),
         "workout": workout,
         "is_social": is_social,
         "is_rest_day": workout is None,
@@ -199,12 +239,12 @@ async def get_today(request: Request, client_date: Optional[str] = None):
     }
 
 
-# ─── Food Log ────────────────────────────────────────────
+# ── Food Log ─────────────────────────────────────
 
 @app.get("/api/food-log")
 async def get_user_food_log(request: Request, log_date: Optional[str] = None):
     user_id = require_auth(request)
-    d = log_date or str(date.today())
+    d = log_date or get_client_date(request)
     entries = get_food_log(d, user_id)
     totals = get_food_log_totals(d, user_id)
     targets = get_user_targets(user_id)
@@ -219,6 +259,13 @@ async def get_user_food_log(request: Request, log_date: Optional[str] = None):
             "fiber": targets["fiber_target"],
         },
     }
+
+@app.post("/api/food-log")
+async def direct_food_log(req: DirectFoodLogRequest, request: Request):
+    user_id = require_auth(request)
+    add_food_log_entry(req.date, user_id, req.description, req.calories, req.protein, req.fiber, source=req.source)
+    save_quick_log(req.description, req.calories, req.protein, req.fiber)
+    return {"status": "logged"}
 
 @app.delete("/api/food-log/{entry_id}")
 async def remove_food_log(entry_id: int, request: Request):
@@ -249,12 +296,13 @@ async def edit_food_log(entry_id: int, req: UpdateFoodLogRequest, request: Reque
         return {"status": "updated"}
 
 
-# ─── Analysis ─────────────────────────────────────────────
+# ── Analysis ─────────────────────────────────────
 
 @app.get("/api/analysis")
 async def get_analysis(request: Request, days: int = 7):
     user_id = require_auth(request)
-    history = get_food_log_history(user_id, days)
+    ref_date = get_client_date(request)
+    history = get_food_log_history(user_id, days, reference_date=ref_date)
     targets = get_user_targets(user_id)
     return {
         "user_id": user_id,
@@ -268,26 +316,19 @@ async def get_analysis(request: Request, days: int = 7):
     }
 
 
-# ─── Photo Endpoints ─────────────────────────────────────
+# ── Photo Endpoints ──────────────────────────────
 
 @app.post("/api/photo/food")
-async def photo_log_meal(request: Request, file: UploadFile = File(...)):
+async def photo_analyze_meal(request: Request, file: UploadFile = File(...)):
     user_id = require_auth(request)
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
-    d = str(date.today())
     contents = await file.read()
     b64 = base64.b64encode(contents).decode("utf-8")
     media_type = file.content_type or "image/jpeg"
     try:
         result = await analyze_food_photo(b64, media_type)
-        cal = result.get("estimated_calories", 0)
-        prot = result.get("estimated_protein", 0)
-        fib = result.get("estimated_fiber", 0)
-        desc = result.get("description", "Photo logged meal")
-        add_food_log_entry(d, user_id, desc, cal, prot, fib, source="photo", photo_analysis=result.get("notes", ""))
-        save_quick_log(desc, cal, prot, fib)
-        return {"status": "logged", "analysis": result}
+        return {"status": "analyzed", "analysis": result}
     except Exception as e:
         logger.error(f"Food photo analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -302,8 +343,7 @@ async def analyze_fridge(request: Request, file: UploadFile = File(...)):
     media_type = file.content_type or "image/jpeg"
     try:
         items = await analyze_fridge_photo(b64, media_type)
-        add_fridge_items_bulk(items)
-        return {"status": "analyzed", "items_found": items, "count": len(items)}
+        return {"status": "analyzed", "items": items}
     except Exception as e:
         logger.error(f"Fridge photo analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -318,18 +358,13 @@ async def scan_receipt(request: Request, file: UploadFile = File(...)):
     media_type = file.content_type or "image/jpeg"
     try:
         result = await analyze_receipt_photo(b64, media_type)
-        items = result.get("items", [])
-        store = result.get("store", "")
-        fridge_items = [{"name": i.get("name", ""), "quantity": i.get("quantity", "")} for i in items if i.get("name")]
-        add_fridge_items_bulk(fridge_items)
-        log_purchases_bulk(items, store)
-        return {"status": "scanned", "store": store, "items": items, "count": len(items), "total": result.get("total", "")}
+        return {"status": "analyzed", "store": result.get("store", ""), "items": result.get("items", []), "total": result.get("total", "")}
     except Exception as e:
         logger.error(f"Receipt scan failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Fridge ───────────────────────────────────────────────
+# ── Fridge ───────────────────────────────────────
 
 @app.get("/api/fridge")
 async def get_fridge(request: Request):
@@ -342,10 +377,32 @@ async def add_to_fridge(req: FridgeItemRequest, request: Request):
     add_fridge_item(req.name, req.category, req.quantity)
     return {"status": "added"}
 
+@app.post("/api/fridge/bulk")
+async def bulk_add_fridge(req: BulkFridgeRequest, request: Request):
+    require_auth(request)
+    items_dicts = [{"name": i.name, "quantity": i.quantity, "category": i.category} for i in req.items]
+    add_fridge_items_bulk(items_dicts)
+    if req.source == "receipt" and req.store:
+        purchase_items = [{"name": i.name, "quantity": i.quantity} for i in req.items]
+        log_purchases_bulk(purchase_items, req.store)
+    return {"status": "added", "count": len(req.items)}
+
+@app.put("/api/fridge/{item_id}")
+async def update_fridge(item_id: int, req: UpdateFridgeItemRequest, request: Request):
+    require_auth(request)
+    update_fridge_item(item_id, req.name, req.quantity, req.category)
+    return {"status": "updated"}
+
 @app.delete("/api/fridge/{item_name}")
 async def remove_from_fridge(item_name: str, request: Request):
     require_auth(request)
     remove_fridge_item(item_name)
+    return {"status": "removed"}
+
+@app.delete("/api/fridge/id/{item_id}")
+async def remove_fridge_by_id(item_id: int, request: Request):
+    require_auth(request)
+    remove_fridge_item_by_id(item_id)
     return {"status": "removed"}
 
 @app.delete("/api/fridge")
@@ -355,16 +412,16 @@ async def clear_all_fridge(request: Request):
     return {"status": "cleared"}
 
 
-# ─── Grocery ─────────────────────────────────────────────
+# ── Grocery ──────────────────────────────────────
 
 @app.post("/api/grocery/generate")
 async def generate_grocery_endpoint(request: Request):
-    require_auth(request)
+    user_id = require_auth(request)
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
     try:
-        grocery = await generate_grocery_list()
-        save_grocery_list(str(date.today()), grocery)
+        grocery = await generate_grocery_list(user_id)
+        save_grocery_list(get_client_date(request), grocery)
         return {"status": "generated", "grocery": grocery}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -372,12 +429,12 @@ async def generate_grocery_endpoint(request: Request):
 @app.get("/api/grocery")
 async def get_grocery(request: Request, week_start: Optional[str] = None):
     require_auth(request)
-    ws = week_start or str(date.today())
+    ws = week_start or get_client_date(request)
     grocery = get_grocery_list(ws)
     return {"status": "ok" if grocery else "not_found", "grocery": grocery}
 
 
-# ─── Quick Log Suggestions ───────────────────────────────
+# ── Quick Log Suggestions ───────────────────────
 
 @app.get("/api/suggestions")
 async def quick_log_suggestions(request: Request, q: Optional[str] = None):
@@ -387,7 +444,7 @@ async def quick_log_suggestions(request: Request, q: Optional[str] = None):
     return {"suggestions": get_frequent_quick_logs(10)}
 
 
-# ─── Serve Frontend ──────────────────────────────────────
+# ── Serve Frontend ───────────────────────────────
 
 import os
 static_dir = os.path.join(os.path.dirname(__file__), "static")

@@ -11,12 +11,13 @@ import logging
 import httpx
 from datetime import date, timedelta
 from config import (
-    ANTHROPIC_API_KEY, USERS, WORKOUTS, SOCIAL_DAYS,
+    ANTHROPIC_API_KEY, WORKOUTS, SOCIAL_DAYS,
     SOCIAL_DRINK_CALORIES, CUISINE_PREFERENCE,
 )
 from db import (
     get_fridge_items, get_food_log_totals, get_recent_dishes,
     log_meal_to_history, was_weekly_protein_used, mark_weekly_protein_used,
+    get_user,
 )
 
 logger = logging.getLogger("dietician.meal_engine")
@@ -67,7 +68,10 @@ async def process_chat_message(user_id: str, message: str, plan_date: Optional[d
     if plan_date is None:
         plan_date = date.today()
 
-    user = USERS[user_id]
+    user = get_user(user_id)
+    if not user:
+        return {"type": "chat", "message": "Please log in to use the dietician."}
+
     totals = get_food_log_totals(str(plan_date), user_id)
     remaining_cal = user["calories_max"] - totals["calories"]
     remaining_prot = user["protein_target"] - totals["protein"]
@@ -89,7 +93,7 @@ DAILY TARGETS: {user['calories_min']}-{user['calories_max']} cal, {user['protein
 CONSUMED SO FAR TODAY: {totals['calories']} cal, {totals['protein']}g protein, {totals['fiber']}g fiber
 REMAINING: ~{remaining_cal} cal, ~{remaining_prot}g protein, ~{remaining_fiber}g fiber
 {workout_info}{social_info}
-FRIDGE: {fridge_desc}
+FRIDGE INVENTORY (prioritize these ingredients): {fridge_desc}
 CUISINE PREFERENCE: {CUISINE_PREFERENCE}
 
 You handle TWO types of messages:
@@ -97,12 +101,12 @@ You handle TWO types of messages:
 TYPE 1 - FOOD LOGGING: The user describes what they ate.
 Examples: "had eggs and toast", "protein shake", "2 rotis with dal", "chicken salad for lunch"
 For these, respond with ONLY this JSON (no other text):
-{{"type": "log", "description": "cleaned up description of food", "calories": 450, "protein": 35, "fiber": 5, "carbs": 40, "fat": 15}}
+{{"type": "log", "description": "short food name, under 50 chars", "calories": 450, "protein": 35, "fiber": 5, "carbs": 40, "fat": 15}}
 
 TYPE 2 - MEAL IDEAS: The user asks for food suggestions.
 Examples: "what should I make for dinner?", "lunch ideas", "need a high protein snack", "what can I cook?"
 For these, respond with ONLY this JSON (no other text):
-{{"type": "suggest", "message": "your conversational response with 2-3 meal suggestions, include estimated cal/protein/fiber for each, keep it concise and practical, under 30 min cook time each"}}
+{{"type": "suggest", "message": "your conversational response with 2-3 meal suggestions, include estimated cal/protein/fiber for each, keep it concise and practical, under 30 min cook time each. When the user specifies servings, scale quantities accordingly. Strongly prefer ingredients currently in the fridge."}}
 
 TYPE 3 - GENERAL CHAT: Questions about nutrition, progress, or anything else.
 Examples: "how am I doing today?", "am I getting enough protein?", "what foods are high in fiber?"
@@ -110,7 +114,8 @@ For these, respond with ONLY this JSON (no other text):
 {{"type": "chat", "message": "your helpful response"}}
 
 RULES:
-- For logging, be realistic with portion estimates. A typical Indian meal serving, not restaurant sized.
+- For logging, be realistic with portion estimates. A typical home-cooked serving, not restaurant sized.
+- Keep the description concise — just the food name and key details, under 50 characters.
 - For suggestions, prioritize fridge ingredients when available. Always include fiber-rich options.
 - Protein shake = 100 cal, 25g protein, 0g fiber.
 - Keep suggestions under 30 minutes cooking time.
@@ -132,7 +137,7 @@ Be realistic about portion sizes.
 
 Return ONLY valid JSON, no markdown fences:
 {
-  "description": "What the food appears to be",
+  "description": "Short food name, under 50 chars",
   "items": ["item 1", "item 2"],
   "estimated_calories": 450,
   "estimated_protein": 35,
@@ -152,12 +157,13 @@ async def analyze_fridge_photo(image_b64: str, media_type: str) -> List[dict]:
     prompt = """Identify every food item in this fridge/pantry photo.
 For each item, estimate the quantity you can see.
 Be specific with item names.
+Categorize each item as one of: produce, dairy, protein, pantry, frozen, beverages, other.
 
 Return ONLY valid JSON, no markdown fences:
 [
-  {"name": "eggs", "quantity": "about 8"},
-  {"name": "milk", "quantity": "half gallon"},
-  {"name": "spinach", "quantity": "1 bag"}
+  {"name": "eggs", "quantity": "about 8", "category": "protein"},
+  {"name": "milk", "quantity": "half gallon", "category": "dairy"},
+  {"name": "spinach", "quantity": "1 bag", "category": "produce"}
 ]"""
     raw = await _call_claude_vision(image_b64, media_type, prompt)
     cleaned = raw.replace("```json", "").replace("```", "").strip()
@@ -165,9 +171,13 @@ Return ONLY valid JSON, no markdown fences:
     result = []
     for i in items:
         if isinstance(i, dict):
-            result.append({"name": str(i.get("name", "")).strip(), "quantity": str(i.get("quantity", "")).strip()})
+            result.append({
+                "name": str(i.get("name", "")).strip(),
+                "quantity": str(i.get("quantity", "")).strip(),
+                "category": str(i.get("category", "other")).strip(),
+            })
         elif isinstance(i, str):
-            result.append({"name": i.strip(), "quantity": ""})
+            result.append({"name": i.strip(), "quantity": "", "category": "other"})
     return [r for r in result if r["name"]]
 
 
@@ -175,11 +185,12 @@ async def analyze_receipt_photo(image_b64: str, media_type: str) -> dict:
     """Analyze a grocery receipt photo to extract purchased items."""
     prompt = """Analyze this grocery store receipt. Extract every food/grocery item.
 Translate abbreviated names to clear names.
+Categorize each item as one of: produce, dairy, protein, pantry, frozen, beverages, other.
 Return ONLY valid JSON, no markdown fences:
 {
   "store": "Store name or unknown",
   "items": [
-    {"name": "Boneless Chicken Breast", "quantity": "2 lbs", "price": "8.99"}
+    {"name": "Boneless Chicken Breast", "quantity": "2 lbs", "price": "8.99", "category": "protein"}
   ],
   "total": "45.67",
   "date": "2026-04-22"
@@ -189,17 +200,24 @@ Return ONLY valid JSON, no markdown fences:
     return json.loads(cleaned)
 
 
-async def generate_grocery_list(week_start_date: Optional[date] = None) -> dict:
+async def generate_grocery_list(user_id: str, week_start_date: Optional[date] = None) -> dict:
     if week_start_date is None:
         week_start_date = date.today()
+
+    user = get_user(user_id)
+    user_name = user["name"] if user else "User"
+    cal_target = user["calories_max"] if user else 2000
+    protein_target = user["protein_target"] if user else 150
+
     fridge = get_fridge_items()
     fridge_names = [f["name"] for f in fridge]
 
-    prompt = f"""You are a personal dietician creating a weekly grocery list.
-HOUSEHOLD: Two people, Indian cuisine primarily. One salmon and one branzino meal per week.
+    prompt = f"""You are a personal dietician creating a weekly grocery list for {user_name}.
+DAILY TARGETS: {cal_target} cal, {protein_target}g protein.
 Daily protein shakes. High fiber foods needed (lentils, vegetables, whole grains).
+CUISINE PREFERENCE: {CUISINE_PREFERENCE}
 CURRENTLY IN FRIDGE: {', '.join(fridge_names) if fridge_names else 'Empty'}
-Generate a practical grocery list organized by category with quantities.
+Generate a practical grocery list organized by category with quantities for one person for the week.
 Return ONLY valid JSON:
 {{
   "categories": [

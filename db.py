@@ -112,19 +112,22 @@ def init_db():
             email TEXT NOT NULL,
             name TEXT NOT NULL,
             picture TEXT DEFAULT '',
+            calories_min INTEGER DEFAULT 1800,
             calories_max INTEGER DEFAULT 2000,
             protein_target INTEGER DEFAULT 150,
             fiber_target INTEGER DEFAULT 30,
+            timezone TEXT DEFAULT 'America/Chicago',
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
     """)
 
-    # Migrations for existing DBs
     for col_sql in [
         "ALTER TABLE fridge_items ADD COLUMN quantity TEXT DEFAULT ''",
         "ALTER TABLE food_log ADD COLUMN fiber INTEGER DEFAULT 0",
         "ALTER TABLE quick_log_history ADD COLUMN fiber INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN calories_min INTEGER DEFAULT 1800",
+        "ALTER TABLE users ADD COLUMN timezone TEXT DEFAULT 'America/Chicago'",
     ]:
         try:
             conn.execute(col_sql)
@@ -135,11 +138,11 @@ def init_db():
     conn.close()
 
 
-# ─── Fridge ───────────────────────────────────────────────
+# ── Fridge ───────────────────────────────────────
 
 def get_fridge_items():
     conn = get_conn()
-    rows = conn.execute("SELECT name, quantity, category, added_at FROM fridge_items ORDER BY name").fetchall()
+    rows = conn.execute("SELECT id, name, quantity, category, added_at FROM fridge_items ORDER BY category, name").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -158,17 +161,39 @@ def add_fridge_items_bulk(items):
             if isinstance(item, dict):
                 name = item.get("name", "").strip()
                 qty = item.get("quantity", "")
+                cat = item.get("category", "other")
                 if name:
-                    conn.execute("INSERT INTO fridge_items (name, quantity) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET quantity = excluded.quantity, added_at = datetime('now')", (name, qty))
+                    conn.execute("INSERT INTO fridge_items (name, quantity, category) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET quantity = excluded.quantity, category = excluded.category, added_at = datetime('now')", (name, qty, cat))
             elif isinstance(item, str) and item.strip():
                 conn.execute("INSERT OR IGNORE INTO fridge_items (name) VALUES (?)", (item.strip(),))
         conn.commit()
     finally:
         conn.close()
 
+def update_fridge_item(item_id, name=None, quantity=None, category=None):
+    conn = get_conn()
+    updates, vals = [], []
+    if name is not None:
+        updates.append("name = ?"); vals.append(name.strip())
+    if quantity is not None:
+        updates.append("quantity = ?"); vals.append(quantity)
+    if category is not None:
+        updates.append("category = ?"); vals.append(category)
+    if updates:
+        vals.append(item_id)
+        conn.execute(f"UPDATE fridge_items SET {', '.join(updates)} WHERE id = ?", vals)
+        conn.commit()
+    conn.close()
+
 def remove_fridge_item(name):
     conn = get_conn()
     conn.execute("DELETE FROM fridge_items WHERE name = ?", (name,))
+    conn.commit()
+    conn.close()
+
+def remove_fridge_item_by_id(item_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM fridge_items WHERE id = ?", (item_id,))
     conn.commit()
     conn.close()
 
@@ -179,7 +204,7 @@ def clear_fridge():
     conn.close()
 
 
-# ─── Food Log ─────────────────────────────────────────────
+# ── Food Log ─────────────────────────────────────
 
 def add_food_log_entry(log_date, user_id, description, calories, protein, fiber=0, carbs=0, fat=0, source="manual", photo_analysis="", meal_ref=""):
     conn = get_conn()
@@ -224,7 +249,8 @@ def get_food_log_totals(log_date, user_id):
     conn.close()
     return {"calories": row["total_cal"], "protein": row["total_protein"], "fiber": row["total_fiber"]}
 
-def get_food_log_history(user_id, days=7):
+def get_food_log_history(user_id, days=7, reference_date=None):
+    ref = reference_date or str(date.today())
     conn = get_conn()
     rows = conn.execute(
         """SELECT log_date,
@@ -233,9 +259,9 @@ def get_food_log_history(user_id, days=7):
            COALESCE(SUM(fiber), 0) as total_fiber,
            COUNT(*) as entry_count
            FROM food_log
-           WHERE user_id = ? AND log_date >= date('now', ? || ' days')
+           WHERE user_id = ? AND log_date >= date(?, ? || ' days')
            GROUP BY log_date ORDER BY log_date ASC""",
-        (user_id, f"-{days}"),
+        (user_id, ref, f"-{days}"),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -250,7 +276,7 @@ def check_food_log_for_keyword(log_date, keyword):
     return row["cnt"] > 0
 
 
-# ─── Quick Log History ────────────────────────────────────
+# ── Quick Log History ────────────────────────────
 
 def save_quick_log(description, calories, protein, fiber=0):
     conn = get_conn()
@@ -278,7 +304,7 @@ def search_quick_logs(query):
     return [dict(r) for r in rows]
 
 
-# ─── Reminders ────────────────────────────────────────────
+# ── Reminders ────────────────────────────────────
 
 def log_reminder_sent(log_date, reminder_type, reminder_time):
     conn = get_conn()
@@ -300,7 +326,7 @@ def was_reminder_sent(log_date, reminder_type, reminder_time):
     return row["cnt"] > 0
 
 
-# ─── Meal History ─────────────────────────────────────────
+# ── Meal History ─────────────────────────────────
 
 def log_meal_to_history(dish_name, plan_date, meal_slot):
     conn = get_conn()
@@ -315,7 +341,7 @@ def get_recent_dishes(days=14):
     return [r["dish_name"] for r in rows]
 
 
-# ─── Weekly Protein ───────────────────────────────────────
+# ── Weekly Protein ───────────────────────────────
 
 def was_weekly_protein_used(week_start, protein_type):
     conn = get_conn()
@@ -330,7 +356,7 @@ def mark_weekly_protein_used(week_start, protein_type, used_date):
     conn.close()
 
 
-# ─── Purchase Log ─────────────────────────────────────────
+# ── Purchase Log ─────────────────────────────────
 
 def log_purchases_bulk(items, store=""):
     conn = get_conn()
@@ -351,7 +377,7 @@ def get_purchase_frequency(limit=20):
     return [dict(r) for r in rows]
 
 
-# ─── Grocery ─────────────────────────────────────────────
+# ── Grocery ─────────────────────────────────────
 
 def save_grocery_list(week_start, items):
     conn = get_conn()
@@ -366,7 +392,7 @@ def get_grocery_list(week_start):
     return json.loads(row["items_json"]) if row else None
 
 
-# ─── Chat History ─────────────────────────────────────────
+# ── Chat History ─────────────────────────────────
 
 def save_chat_message(user_id, role, content, chat_date):
     conn = get_conn()
@@ -384,7 +410,7 @@ def get_chat_history(user_id, chat_date, limit=20):
     return [dict(r) for r in rows]
 
 
-# ─── Users ───────────────────────────────────────────────
+# ── Users ───────────────────────────────────────
 
 def create_or_update_user(google_id, email, name, picture=""):
     conn = get_conn()
@@ -415,6 +441,15 @@ def update_user_targets(google_id, calories_max, protein_target, fiber_target):
     conn.execute(
         "UPDATE users SET calories_max = ?, protein_target = ?, fiber_target = ?, updated_at = datetime('now') WHERE google_id = ?",
         (calories_max, protein_target, fiber_target, google_id),
+    )
+    conn.commit()
+    conn.close()
+
+def update_user_timezone(google_id, timezone):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE users SET timezone = ?, updated_at = datetime('now') WHERE google_id = ?",
+        (timezone, google_id),
     )
     conn.commit()
     conn.close()
