@@ -47,7 +47,7 @@ body{font-family:'DM Sans',sans-serif;background:rgb(var(--bg));color:#fff;min-h
 .macro-pill:nth-child(3){animation-delay:240ms}
 @keyframes pillIn{from{opacity:0;transform:translateY(16px) scale(0.95)}to{opacity:1;transform:translateY(0) scale(1)}}
 .macro-pill-val{font-size:28px;font-weight:700;line-height:1;letter-spacing:-0.02em}
-.macro-pill-sub{font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px}
+.macro-pill-sub{font-size:12px;color:rgba(255,255,255,0.6);margin-top:4px}
 .macro-pill-label{font-size:9px;color:rgba(255,255,255,0.45);margin-top:4px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600}
 .macro-bar-progress{height:4px;background:rgba(255,255,255,0.06);border-radius:2px;margin-top:10px;overflow:hidden}
 .macro-bar-fill{height:100%;border-radius:2px;transition:width 600ms var(--ease-out);position:relative}
@@ -391,7 +391,7 @@ else{h+=`<div class="workout-bar wb-rest" onclick="showWorkoutModal()" style="cu
 const calMax=tg.calories_adjusted||tg.calories;
 const wkCal=tg.workout_calories||0;
 h+=`<div class="macro-bar">`;
-[{label:"Calories",val:t.calories,max:calMax,color:u.color,unit:"",extra:wkCal?` <span style="font-size:10px;opacity:0.5">(${tg.calories}+${wkCal})</span>`:''},
+[{label:"Calories",val:t.calories,max:calMax,color:u.color,unit:"",extra:wkCal?` <span style="font-size:11px;color:#4ADE80">(+${wkCal} workout)</span>`:''},
  {label:"Protein",val:t.protein,max:tg.protein,color:"#4ADE80",unit:"g",extra:''},
  {label:"Fiber",val:t.fiber,max:tg.fiber,color:"#FBBF24",unit:"g",extra:''}
 ].forEach(m=>{
