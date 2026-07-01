@@ -48,3 +48,4 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", _oauth_data.get("client_id
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", _oauth_data.get("client_secret", ""))
 SESSION_SECRET = os.environ.get("SESSION_SECRET", secrets.token_hex(32))
 BASE_URL = os.environ.get("BASE_URL", "https://dietician.abhijitt.com")
+SYNC_TOKEN = os.environ.get("SYNC_TOKEN", "")

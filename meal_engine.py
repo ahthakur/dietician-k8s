@@ -17,7 +17,7 @@ from config import (
 from db import (
     get_fridge_items, get_food_log_totals, get_recent_dishes,
     log_meal_to_history, was_weekly_protein_used, mark_weekly_protein_used,
-    get_user,
+    get_user, get_workout, get_latest_workout,
 )
 
 logger = logging.getLogger("dietician.meal_engine")
@@ -78,8 +78,17 @@ async def process_chat_message(user_id: str, message: str, plan_date: Optional[d
     remaining_fiber = user["fiber_target"] - totals["fiber"]
 
     dow = plan_date.weekday()
-    workout = WORKOUTS.get(dow)
     is_social = dow in SOCIAL_DAYS
+
+    # Resolve workout: DB > previous day > config default
+    today_str = str(plan_date)
+    workout = get_workout(user_id, today_str)
+    if not workout:
+        prev = get_latest_workout(user_id, today_str)
+        if prev:
+            workout = prev
+        else:
+            workout = WORKOUTS.get(dow)
 
     fridge = get_fridge_items()
     fridge_desc = ", ".join([f"{f['name']}" + (f" ({f['quantity']})" if f.get('quantity') else "") for f in fridge]) if fridge else "empty"

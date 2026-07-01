@@ -20,9 +20,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 
-from config import HOST, PORT, ANTHROPIC_API_KEY, WORKOUTS, SOCIAL_DAYS, SESSION_SECRET
+from config import HOST, PORT, ANTHROPIC_API_KEY, WORKOUTS, SOCIAL_DAYS, SESSION_SECRET, SYNC_TOKEN
 from auth import login as auth_login, callback as auth_callback, me as auth_me, logout as auth_logout, require_auth
 from db import get_user, update_user_targets, update_user_timezone
+from db import get_workout, get_latest_workout, set_workout, delete_workout
 from db import (
     init_db, get_fridge_items, add_fridge_item, add_fridge_items_bulk,
     remove_fridge_item, remove_fridge_item_by_id, clear_fridge,
@@ -123,6 +124,19 @@ class UpdateProfileRequest(BaseModel):
     protein_target: int
     fiber_target: int
 
+class WorkoutRequest(BaseModel):
+    time: str = ""
+    duration_min: int = 45
+    label: str = ""
+    calories_burned: int = 0
+    source: str = "manual"
+
+class AppleHealthSyncRequest(BaseModel):
+    date: str = ""
+    workouts: list = []
+    active_calories: float = 0
+    total_duration_min: float = 0
+
 
 # ── Helper: get user targets ────────────────────
 
@@ -210,11 +224,30 @@ async def get_today(request: Request, client_date: Optional[str] = None):
     user_id = require_auth(request)
     today = client_date or get_client_date(request)
     dow = date.fromisoformat(today).weekday()
-    workout = WORKOUTS.get(dow)
     is_social = dow in SOCIAL_DAYS
     totals = get_food_log_totals(today, user_id)
     entries = get_food_log(today, user_id)
     targets = get_user_targets(user_id)
+
+    # Resolve workout: DB entry > yesterday's DB entry > config default
+    workout = get_workout(user_id, today)
+    if workout:
+        workout = {"time": workout["time"], "duration_min": workout["duration_min"],
+                   "label": workout["label"], "calories_burned": workout["calories_burned"],
+                   "source": workout["source"]}
+    else:
+        prev = get_latest_workout(user_id, today)
+        if prev:
+            workout = {"time": prev["time"], "duration_min": prev["duration_min"],
+                       "label": prev["label"], "calories_burned": 0,
+                       "source": prev["source"], "inherited": True}
+        else:
+            config_w = WORKOUTS.get(dow)
+            if config_w:
+                workout = {**config_w, "calories_burned": 0, "source": "default", "inherited": True}
+
+    workout_cal = workout["calories_burned"] if workout else 0
+    adjusted_calories = targets["calories_max"] + workout_cal
 
     # Update stored timezone if sent
     tz_name = request.headers.get("X-Timezone")
@@ -233,10 +266,81 @@ async def get_today(request: Request, client_date: Optional[str] = None):
         "entries": entries,
         "targets": {
             "calories": targets["calories_max"],
+            "calories_adjusted": adjusted_calories,
+            "workout_calories": workout_cal,
             "protein": targets["protein_target"],
             "fiber": targets["fiber_target"],
         },
     }
+
+
+# ── Workout ─────────────────────────────────────
+
+@app.put("/api/workout")
+async def update_workout(req: WorkoutRequest, request: Request, log_date: Optional[str] = None):
+    user_id = require_auth(request)
+    d = log_date or get_client_date(request)
+    set_workout(user_id, d, time=req.time, duration_min=req.duration_min,
+                label=req.label, calories_burned=req.calories_burned, source=req.source)
+    return {"status": "saved"}
+
+@app.delete("/api/workout")
+async def remove_workout(request: Request, log_date: Optional[str] = None):
+    user_id = require_auth(request)
+    d = log_date or get_client_date(request)
+    delete_workout(user_id, d)
+    return {"status": "deleted"}
+
+@app.post("/api/workout/sync")
+async def sync_apple_health(request: Request, token: Optional[str] = None, user_email: Optional[str] = None):
+    # Auth: either session cookie or sync token + email
+    user_id = None
+    try:
+        user_id = require_auth(request)
+    except Exception:
+        pass
+    if not user_id:
+        if not SYNC_TOKEN or token != SYNC_TOKEN:
+            raise HTTPException(status_code=401, detail="Invalid sync token")
+        if not user_email:
+            raise HTTPException(status_code=400, detail="user_email required with token auth")
+        from db import get_conn
+        conn = get_conn()
+        row = conn.execute("SELECT google_id FROM users WHERE email = ?", (user_email,)).fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        user_id = row["google_id"]
+
+    body = await request.json()
+    logger.info(f"Workout sync body: {body}")
+    # Try exact key, then fallback to any key containing "calori"
+    cal_raw = body.get("active_calories") or body.get("active calories")
+    if cal_raw is None:
+        for k, v in body.items():
+            if "calori" in k.lower() and isinstance(v, (int, float)):
+                cal_raw = v
+                break
+    cal = int(float(cal_raw or 0))
+    dur = int(float(body.get("total_duration_min", 0)))
+    raw_date = body.get("date", "")
+    d = raw_date if isinstance(raw_date, str) and len(raw_date) == 10 else get_client_date(request)
+    workouts = body.get("workouts", [])
+    if cal <= 0:
+        return {"status": "skipped", "message": "No active calories to sync"}
+    labels = []
+    for w in (workouts[:3] if workouts else []):
+        if isinstance(w, dict):
+            labels.append(w.get("type", "Workout"))
+        else:
+            labels.append(str(w))
+    label = ", ".join(labels) if labels else "Workout"
+    first_time = ""
+    if workouts and isinstance(workouts[0], dict):
+        first_time = workouts[0].get("start_time", "")
+    set_workout(user_id, d, time=first_time, duration_min=dur,
+                label=label, calories_burned=cal, source="apple_health")
+    return {"status": "synced", "date": d, "active_calories": cal}
 
 
 # ── Food Log ─────────────────────────────────────

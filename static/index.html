@@ -140,9 +140,9 @@ body{font-family:'DM Sans',sans-serif;background:rgb(var(--bg));color:#fff;min-h
 .photo-up-icon{font-size:28px;margin-bottom:6px}
 .photo-up-label{font-size:11px;color:rgba(255,255,255,0.4);font-weight:500}
 .fridge-add{display:flex;gap:8px;margin-bottom:20px}
-.fridge-add input{flex:1;padding:14px 16px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:var(--radius-sm);color:#fff;font-size:14px;outline:none;font-family:'DM Sans',sans-serif;transition:border-color 250ms var(--ease-out),box-shadow 250ms var(--ease-out)}
+.fridge-add input{padding:12px 10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:var(--radius-sm);color:#fff;font-size:14px;outline:none;font-family:'DM Sans',sans-serif;min-width:0;box-sizing:border-box;transition:border-color 250ms var(--ease-out),box-shadow 250ms var(--ease-out)}
 .fridge-add input:focus{border-color:rgba(59,130,246,0.4);box-shadow:0 0 0 3px rgba(59,130,246,0.1)}
-.fridge-add button{padding:14px 20px;border:none;border-radius:var(--radius-sm);color:#fff;font-size:18px;cursor:pointer;line-height:1;transition:transform 160ms var(--ease-out),box-shadow 200ms var(--ease-out);box-shadow:0 2px 10px rgba(59,130,246,0.25)}
+.fridge-add button{padding:12px 18px;border:none;border-radius:var(--radius-sm);color:#fff;font-size:18px;cursor:pointer;line-height:1;flex-shrink:0;transition:transform 160ms var(--ease-out),box-shadow 200ms var(--ease-out);box-shadow:0 2px 10px rgba(59,130,246,0.25)}
 .fridge-add button:active{transform:scale(0.9)}
 .fridge-cat-header{font-size:11px;font-weight:700;color:rgba(255,255,255,0.4);margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.1em}
 .fridge-cat-header:first-child{margin-top:0}
@@ -172,12 +172,13 @@ body{font-family:'DM Sans',sans-serif;background:rgb(var(--bg));color:#fff;min-h
 /* ── Modal ────────────────────────────────────── */
 .modal-bg{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0);z-index:50;display:flex;align-items:flex-end;justify-content:center;animation:backdropIn 300ms var(--ease-out) forwards}
 @keyframes backdropIn{from{background:rgba(0,0,0,0)}to{background:rgba(0,0,0,0.75)}}
-.modal{width:100%;max-width:520px;background:linear-gradient(180deg,#1e1e36 0%,#161628 100%);border-radius:24px 24px 0 0;padding:28px 24px 44px;max-height:80vh;overflow-y:auto;transform:translateY(100%);animation:sheetUp 400ms var(--ease-out) forwards;border-top:1px solid rgba(255,255,255,0.08)}
+.modal{width:100%;max-width:520px;background:linear-gradient(180deg,#1e1e36 0%,#161628 100%);border-radius:24px 24px 0 0;padding:28px 24px 44px;max-height:80vh;overflow-y:auto;overflow-x:hidden;transform:translateY(100%);animation:sheetUp 400ms var(--ease-out) forwards;border-top:1px solid rgba(255,255,255,0.08)}
 @keyframes sheetUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
 .modal::before{content:'';display:block;width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 20px}
 .modal h3{font-size:17px;font-weight:700;margin-bottom:20px}
 .modal label{font-size:11px;color:rgba(255,255,255,0.45);display:block;margin-bottom:6px;margin-top:14px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600}
 .modal input,.modal select{width:100%;padding:13px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:#fff;font-size:14px;outline:none;font-family:'DM Sans',sans-serif;box-sizing:border-box;transition:border-color 250ms var(--ease-out),box-shadow 250ms var(--ease-out)}
+.modal input[type=time],.modal input[type=number]{-webkit-appearance:none;-moz-appearance:textfield;min-width:0;max-width:100%}
 .modal input:focus,.modal select:focus{border-color:rgba(59,130,246,0.4);box-shadow:0 0 0 3px rgba(59,130,246,0.1)}
 .modal select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='rgba(255,255,255,0.4)' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;padding-right:36px}
 .modal select option{background:#1e1e36;color:#fff}
@@ -383,18 +384,21 @@ if(!S.today)return'<div style="text-align:center;padding:40px;color:rgba(255,255
 const t=S.today._viewTotals||S.today.totals,tg=S.today.targets,u={color:"#3B82F6"};
 
 let h='';
-if(S.today.workout){h+=`<div class="workout-bar wb-active">🔥 ${S.today.workout.label}${S.today.is_social?' · 🍷 Social evening':''}</div>`}
-else if(S.today.is_rest_day){h+=`<div class="workout-bar wb-rest">🧘 Rest Day</div>`}
+const srcIcon=S.today.workout?.source==='apple_health'?' 🍎':'';
+if(S.today.workout){h+=`<div class="workout-bar wb-active" onclick="showWorkoutModal()" style="cursor:pointer">🔥 ${S.today.workout.label}${S.today.workout.calories_burned?` · ${S.today.workout.calories_burned} cal burned${srcIcon}`:''}${S.today.is_social?' · 🍷 Social evening':''}<span style="float:right;opacity:0.4">✏️</span></div>`}
+else{h+=`<div class="workout-bar wb-rest" onclick="showWorkoutModal()" style="cursor:pointer">🧘 Rest Day<span style="float:right;opacity:0.4">✏️</span></div>`}
 
+const calMax=tg.calories_adjusted||tg.calories;
+const wkCal=tg.workout_calories||0;
 h+=`<div class="macro-bar">`;
-[{label:"Calories",val:t.calories,max:tg.calories,color:u.color,unit:""},
- {label:"Protein",val:t.protein,max:tg.protein,color:"#4ADE80",unit:"g"},
- {label:"Fiber",val:t.fiber,max:tg.fiber,color:"#FBBF24",unit:"g"}
+[{label:"Calories",val:t.calories,max:calMax,color:u.color,unit:"",extra:wkCal?` <span style="font-size:10px;opacity:0.5">(${tg.calories}+${wkCal})</span>`:''},
+ {label:"Protein",val:t.protein,max:tg.protein,color:"#4ADE80",unit:"g",extra:''},
+ {label:"Fiber",val:t.fiber,max:tg.fiber,color:"#FBBF24",unit:"g",extra:''}
 ].forEach(m=>{
 const pct=Math.min((m.val/(m.max||1))*100,100);
 h+=`<div class="macro-pill" style="box-shadow:0 0 20px ${m.color}10,inset 0 1px 0 rgba(255,255,255,0.06)">
 <div class="macro-pill-val" style="color:${m.color};text-shadow:0 0 24px ${m.color}40">${m.val}</div>
-<div class="macro-pill-sub">/ ${m.max}${m.unit}</div>
+<div class="macro-pill-sub">/ ${m.max}${m.unit}${m.extra}</div>
 <div class="macro-pill-label">${m.label}</div>
 <div class="macro-bar-progress"><div class="macro-bar-fill" style="width:${pct}%;background:linear-gradient(90deg,${m.color},${m.color}cc)"></div></div>
 </div>`});
@@ -526,9 +530,9 @@ let h=`<div class="photo-uploads">
 </div>`;
 
 h+=`<div class="fridge-add">
-<input id="fridgeInput" placeholder="Item name..." onkeydown="if(event.key==='Enter')addFridgeItem()" style="flex:2">
-<input id="fridgeQtyInput" placeholder="Qty" onkeydown="if(event.key==='Enter')addFridgeItem()" style="flex:1">
-<button style="background:#3B82F6" onclick="addFridgeItem()">+</button></div>`;
+<input id="fridgeInput" placeholder="Item name..." onkeydown="if(event.key==='Enter')addFridgeItem()" style="flex:3;min-width:0">
+<input id="fridgeQtyInput" placeholder="Qty" onkeydown="if(event.key==='Enter')addFridgeItem()" style="flex:1;min-width:0;max-width:80px">
+<button style="background:#3B82F6;flex-shrink:0" onclick="addFridgeItem()">+</button></div>`;
 
 h+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
 <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.4)">${S.fridge.length} ITEMS</span>
@@ -615,6 +619,55 @@ try{await api("/api/food-log",{method:"POST",body:JSON.stringify({date:logDate,d
 S.chatMsgs.push({role:"bot",type:"log",content:`📸 ${desc} (${cal} cal, ${prot}g protein, ${fib}g fiber)`});
 toast(`Logged: ${desc}`,"rgba(74,222,128,0.9)");
 await loadToday();render()}catch(e){toast("Failed to save","rgba(239,68,68,0.9)")}}
+
+// ── Workout Modal ─────────────────────────────────
+function showWorkoutModal(){
+const w=S.today.workout||{};
+const mc=document.getElementById("modalContainer");
+mc.innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+<h3>Workout for ${S.today.day_name||'Today'}</h3>
+<label>Label</label><input id="wkLabel" value="${(w.label||'').replace(/"/g,'&quot;')}" placeholder="e.g. Burn Bootcamp 5:30 PM">
+<div style="display:flex;gap:8px;margin-top:4px">
+<div style="flex:1;min-width:0;overflow:hidden"><label>Time</label><input id="wkTime" type="time" value="${w.time||'17:30'}" oninput="updateWorkoutLabel()" style="max-width:100%"></div>
+<div style="flex:1;min-width:0;overflow:hidden"><label>Duration (min)</label><input id="wkDur" type="number" value="${w.duration_min||45}" style="max-width:100%"></div>
+</div>
+<label style="margin-top:4px">Calories Burned</label><input id="wkCal" type="number" value="${w.calories_burned||0}" placeholder="0">
+<button class="btn btn-green btn-full" style="margin-top:20px" onclick="saveWorkout()">Save Workout</button>
+<button class="btn btn-full" style="margin-top:8px;background:rgba(239,68,68,0.2);color:#f87171" onclick="markRestDay()">Mark as Rest Day</button>
+<button class="btn btn-g btn-full" style="margin-top:8px" onclick="closeModal()">Cancel</button>
+</div></div>`}
+
+function updateWorkoutLabel(){
+const timeInput=document.getElementById("wkTime");
+const labelInput=document.getElementById("wkLabel");
+if(!timeInput||!labelInput)return;
+const t=timeInput.value;
+if(!t)return;
+const [h,m]=t.split(':').map(Number);
+const ampm=h>=12?'PM':'AM';
+const h12=h%12||12;
+const timeStr=`${h12}:${String(m).padStart(2,'0')} ${ampm}`;
+const oldLabel=labelInput.value;
+const timePattern=/\d{1,2}:\d{2}\s*(AM|PM|am|pm)/;
+if(timePattern.test(oldLabel)){labelInput.value=oldLabel.replace(timePattern,timeStr)}
+else if(oldLabel){labelInput.value=`${oldLabel} ${timeStr}`}
+else{labelInput.value=`Workout ${timeStr}`}}
+
+async function saveWorkout(){
+const label=document.getElementById("wkLabel").value.trim();
+const time=document.getElementById("wkTime").value;
+const dur=parseInt(document.getElementById("wkDur").value)||45;
+const cal=parseInt(document.getElementById("wkCal").value)||0;
+const viewDate=S.logDate||getLocalDate();
+closeModal();
+try{await api(`/api/workout?log_date=${viewDate}`,{method:"PUT",body:JSON.stringify({time,duration_min:dur,label:label||`Workout ${time}`,calories_burned:cal})});
+toast("Workout saved","rgba(74,222,128,0.9)");await loadToday()}catch(e){toast("Failed to save workout","rgba(239,68,68,0.9)")}}
+
+async function markRestDay(){
+const viewDate=S.logDate||getLocalDate();
+closeModal();
+try{await api(`/api/workout?log_date=${viewDate}`,{method:"DELETE"});
+toast("Marked as rest day","rgba(74,222,128,0.9)");await loadToday()}catch(e){toast("Failed to update","rgba(239,68,68,0.9)")}}
 
 // ── Meal Ideas Modal ─────────────────────────────────
 function showMealIdeasModal(){

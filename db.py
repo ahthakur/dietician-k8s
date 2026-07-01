@@ -107,6 +107,19 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS workout_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            log_date TEXT NOT NULL,
+            time TEXT DEFAULT '',
+            duration_min INTEGER DEFAULT 45,
+            label TEXT DEFAULT '',
+            calories_burned INTEGER DEFAULT 0,
+            source TEXT DEFAULT 'manual',
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, log_date)
+        );
+
         CREATE TABLE IF NOT EXISTS users (
             google_id TEXT PRIMARY KEY,
             email TEXT NOT NULL,
@@ -128,6 +141,7 @@ def init_db():
         "ALTER TABLE quick_log_history ADD COLUMN fiber INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN calories_min INTEGER DEFAULT 1800",
         "ALTER TABLE users ADD COLUMN timezone TEXT DEFAULT 'America/Chicago'",
+        "ALTER TABLE workout_log ADD COLUMN source TEXT DEFAULT 'manual'",
     ]:
         try:
             conn.execute(col_sql)
@@ -219,7 +233,7 @@ def add_food_log_entry(log_date, user_id, description, calories, protein, fiber=
 def get_food_log(log_date, user_id):
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id, description, calories, protein, fiber, carbs, fat, source, photo_analysis, meal_ref, time_logged FROM food_log WHERE log_date = ? AND user_id = ? ORDER BY time_logged ASC",
+        "SELECT id, description, calories, protein, fiber, carbs, fat, source, photo_analysis, meal_ref, time_logged FROM food_log WHERE log_date = ? AND user_id = ? ORDER BY time_logged DESC",
         (log_date, user_id),
     ).fetchall()
     conn.close()
@@ -408,6 +422,47 @@ def get_chat_history(user_id, chat_date, limit=20):
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# ── Workout Log ────────────────────────────────
+
+def get_workout(user_id, log_date):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM workout_log WHERE user_id = ? AND log_date = ?",
+        (user_id, log_date),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_latest_workout(user_id, before_date):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM workout_log WHERE user_id = ? AND log_date < ? ORDER BY log_date DESC LIMIT 1",
+        (user_id, before_date),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def set_workout(user_id, log_date, time="", duration_min=45, label="", calories_burned=0, source="manual"):
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO workout_log (user_id, log_date, time, duration_min, label, calories_burned, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, log_date) DO UPDATE SET
+           time = excluded.time, duration_min = excluded.duration_min,
+           label = excluded.label, calories_burned = excluded.calories_burned,
+           source = excluded.source""",
+        (user_id, log_date, time, duration_min, label, calories_burned, source),
+    )
+    conn.commit()
+    conn.close()
+
+def delete_workout(user_id, log_date):
+    conn = get_conn()
+    conn.execute("DELETE FROM workout_log WHERE user_id = ? AND log_date = ?", (user_id, log_date))
+    conn.commit()
+    conn.close()
 
 
 # ── Users ───────────────────────────────────────
