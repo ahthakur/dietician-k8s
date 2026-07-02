@@ -760,6 +760,13 @@ const mc=document.getElementById("modalContainer");
 mc.innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
 <h3>Edit Entry</h3>
 <label>Description</label><input id="editDesc" value="${desc.replace(/"/g,'&quot;')}">
+<label style="margin-top:4px">Quantity</label>
+<div class="selector-toggle" id="qtyToggle" data-base-cal="${cal}" data-base-prot="${prot}" data-base-fib="${fib}">
+<button class="active" onclick="setQty(this,1)" data-val="1">1</button>
+<button onclick="setQty(this,2)" data-val="2">2</button>
+<button onclick="setQty(this,3)" data-val="3">3</button>
+<button onclick="setQty(this,4)" data-val="4">4</button>
+</div>
 <div style="display:flex;gap:8px;margin-top:4px">
 <div style="flex:1"><label>Calories</label><input id="editCal" type="number" value="${cal}"></div>
 <div style="flex:1"><label>Protein</label><input id="editProt" type="number" value="${prot}"></div>
@@ -771,6 +778,14 @@ mc.innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()
 </div>
 <button class="btn btn-g btn-full" style="margin-top:8px" onclick="closeModal()">Cancel</button>
 </div></div>`}
+
+function setQty(btn,qty){
+btn.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+btn.classList.add('active');
+const t=document.getElementById('qtyToggle');
+document.getElementById('editCal').value=Math.round(parseInt(t.dataset.baseCal)*qty);
+document.getElementById('editProt').value=Math.round(parseInt(t.dataset.baseProt)*qty);
+document.getElementById('editFib').value=Math.round(parseInt(t.dataset.baseFib)*qty)}
 
 async function submitEdit(id,reEst){
 const desc=document.getElementById("editDesc").value.trim();
