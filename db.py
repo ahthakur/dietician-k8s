@@ -142,6 +142,7 @@ def init_db():
         "ALTER TABLE users ADD COLUMN calories_min INTEGER DEFAULT 1800",
         "ALTER TABLE users ADD COLUMN timezone TEXT DEFAULT 'America/Chicago'",
         "ALTER TABLE workout_log ADD COLUMN source TEXT DEFAULT 'manual'",
+        "ALTER TABLE food_log ADD COLUMN quantity INTEGER DEFAULT 1",
     ]:
         try:
             conn.execute(col_sql)
@@ -245,10 +246,14 @@ def delete_food_log_entry(entry_id):
     conn.commit()
     conn.close()
 
-def update_food_log_entry(entry_id, calories, protein, fiber=0, description=None):
+def update_food_log_entry(entry_id, calories, protein, fiber=0, description=None, quantity=None):
     conn = get_conn()
-    if description is not None:
+    if description is not None and quantity is not None:
+        conn.execute("UPDATE food_log SET calories = ?, protein = ?, fiber = ?, description = ?, quantity = ? WHERE id = ?", (calories, protein, fiber, description, quantity, entry_id))
+    elif description is not None:
         conn.execute("UPDATE food_log SET calories = ?, protein = ?, fiber = ?, description = ? WHERE id = ?", (calories, protein, fiber, description, entry_id))
+    elif quantity is not None:
+        conn.execute("UPDATE food_log SET calories = ?, protein = ?, fiber = ?, quantity = ? WHERE id = ?", (calories, protein, fiber, quantity, entry_id))
     else:
         conn.execute("UPDATE food_log SET calories = ?, protein = ?, fiber = ? WHERE id = ?", (calories, protein, fiber, entry_id))
     conn.commit()
@@ -457,6 +462,30 @@ def set_workout(user_id, log_date, time="", duration_min=45, label="", calories_
     )
     conn.commit()
     conn.close()
+
+DRINK_KEYWORDS = ('beer', 'wine', 'cocktail', 'whiskey', 'whisky', 'vodka', 'rum', 'gin', 'tequila',
+    'margarita', 'martini', 'bourbon', 'scotch', 'sake', 'champagne', 'prosecco', 'seltzer',
+    'hard cider', 'mead', 'sangria', 'mojito', 'daiquiri', 'negroni', 'old fashioned',
+    'manhattan', 'cosmopolitan', 'pina colada', 'alcohol', 'drink', 'shot', 'brew', 'ale',
+    'lager', 'stout', 'ipa', 'pilsner', 'malt', 'cider', 'brandy', 'cognac', 'aperol')
+
+def get_drinks_range(user_id, start_date, end_date):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT log_date, description, calories, COALESCE(quantity, 1) as quantity FROM food_log WHERE user_id = ? AND log_date >= ? AND log_date <= ?",
+        (user_id, start_date, end_date),
+    ).fetchall()
+    conn.close()
+    drinks = {}
+    for r in rows:
+        desc_lower = r["description"].lower()
+        if any(k in desc_lower for k in DRINK_KEYWORDS):
+            d = r["log_date"]
+            if d not in drinks:
+                drinks[d] = {"count": 0, "calories": 0}
+            drinks[d]["count"] += r["quantity"]
+            drinks[d]["calories"] += r["calories"]
+    return drinks
 
 def get_workouts_range(user_id, start_date, end_date):
     conn = get_conn()

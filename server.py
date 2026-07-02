@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from config import HOST, PORT, ANTHROPIC_API_KEY, WORKOUTS, SOCIAL_DAYS, SESSION_SECRET, SYNC_TOKEN
 from auth import login as auth_login, callback as auth_callback, me as auth_me, logout as auth_logout, require_auth
 from db import get_user, update_user_targets, update_user_timezone
-from db import get_workout, get_latest_workout, set_workout, delete_workout, get_workouts_range
+from db import get_workout, get_latest_workout, set_workout, delete_workout, get_workouts_range, get_drinks_range
 from db import (
     init_db, get_fridge_items, add_fridge_item, add_fridge_items_bulk,
     remove_fridge_item, remove_fridge_item_by_id, clear_fridge,
@@ -94,6 +94,7 @@ class UpdateFoodLogRequest(BaseModel):
     protein: Optional[int] = None
     fiber: Optional[int] = None
     description: Optional[str] = None
+    quantity: Optional[int] = None
     re_estimate: bool = False
 
 class BulkFridgeItem(BaseModel):
@@ -396,7 +397,7 @@ async def edit_food_log(entry_id: int, req: UpdateFoodLogRequest, request: Reque
         cal = req.calories or 0
         prot = req.protein or 0
         fib = req.fiber or 0
-        update_food_log_entry(entry_id, cal, prot, fib, description=req.description)
+        update_food_log_entry(entry_id, cal, prot, fib, description=req.description, quantity=req.quantity)
         return {"status": "updated"}
 
 
@@ -416,14 +417,18 @@ async def get_analysis(request: Request, days: int = 7):
     else:
         start = end = ref_date
     workout_map = get_workouts_range(user_id, start, end)
+    drinks_map = get_drinks_range(user_id, start, end)
 
-    # Add deficit data to each day
+    # Add deficit and drink data to each day
     base_cal = targets["calories_max"]
     for day in history:
         wk_cal = workout_map.get(day["log_date"], 0)
         day["workout_calories"] = wk_cal
         day["adjusted_target"] = base_cal + wk_cal
         day["deficit"] = day["total_cal"] - (base_cal + wk_cal)
+        dr = drinks_map.get(day["log_date"])
+        day["drinks"] = dr["count"] if dr else 0
+        day["drink_calories"] = dr["calories"] if dr else 0
 
     return {
         "user_id": user_id,

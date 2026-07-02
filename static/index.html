@@ -561,6 +561,22 @@ h+=`<div class="avg-card">
 <div style="text-align:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,0.5)">${totalDeficit<=0?`On track: ~${lbsLost} lbs deficit (3500 cal = 1 lb)`:`Over target by ${totalDeficit} cal`}</div>
 </div>`}
 
+const totalDrinks=data.reduce((s,d)=>s+(d.drinks||0),0);
+const totalDrinkCal=data.reduce((s,d)=>s+(d.drink_calories||0),0);
+if(totalDrinks>0){
+const drinkDays=data.filter(d=>d.drinks>0).length;
+const avgDrinksPerDrinkDay=(totalDrinks/drinkDays).toFixed(1);
+const pctCal=Math.round(totalDrinkCal/data.reduce((s,d)=>s+d.total_cal,0)*100);
+h+=`<div class="avg-card">
+<div class="avg-title" style="color:#FB923C">🍺 Drinks Summary</div>
+<div class="avg-row">
+<div class="avg-item"><span style="color:#FB923C">${totalDrinks}</span><span> drinks</span></div>
+<div class="avg-item"><span style="color:#FB923C">${totalDrinkCal}</span><span> cal from drinks</span></div>
+<div class="avg-item"><span style="color:#FB923C">${pctCal}%</span><span> of total cal</span></div>
+</div>
+<div style="text-align:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,0.5)">${drinkDays} of ${data.length} days · ~${avgDrinksPerDrinkDay} drinks on those days</div>
+</div>`}
+
 return h}
 
 function renderFridge(){
@@ -792,11 +808,13 @@ const desc=document.getElementById("editDesc").value.trim();
 const cal=parseInt(document.getElementById("editCal").value)||0;
 const prot=parseInt(document.getElementById("editProt").value)||0;
 const fib=parseInt(document.getElementById("editFib").value)||0;
+const qtyBtn=document.querySelector('#qtyToggle button.active');
+const qty=qtyBtn?parseInt(qtyBtn.dataset.val)||1:1;
 closeModal();
 if(reEst&&desc){toast("Re-estimating...","rgba(59,130,246,0.9)");
 const r=await api(`/api/food-log/${id}`,{method:"PUT",body:JSON.stringify({description:desc,re_estimate:true})});
 toast(`Updated: ${r.calories} cal, ${r.protein}g protein, ${r.fiber}g fiber`,"rgba(74,222,128,0.9)")}
-else{await api(`/api/food-log/${id}`,{method:"PUT",body:JSON.stringify({calories:cal,protein:prot,fiber:fib,description:desc||undefined})})}
+else{await api(`/api/food-log/${id}`,{method:"PUT",body:JSON.stringify({calories:cal,protein:prot,fiber:fib,description:desc||undefined,quantity:qty})})}
 await loadToday()}
 
 function closeModal(){document.getElementById("modalContainer").innerHTML=""}
