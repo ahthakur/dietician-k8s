@@ -23,7 +23,9 @@ from pydantic import BaseModel
 from config import HOST, PORT, ANTHROPIC_API_KEY, WORKOUTS, SOCIAL_DAYS, SESSION_SECRET, SYNC_TOKEN
 from auth import login as auth_login, callback as auth_callback, me as auth_me, logout as auth_logout, require_auth
 from db import get_user, update_user_targets, update_user_timezone
-from db import get_workout, get_latest_workout, set_workout, delete_workout, get_workouts_range, get_drinks_range
+from db import (get_workout, get_latest_workout, set_workout, delete_workout,
+    get_workouts_range, get_drinks_range, set_vacation, unset_vacation,
+    is_vacation, get_vacation_range)
 from db import (
     init_db, get_fridge_items, add_fridge_item, add_fridge_items_bulk,
     remove_fridge_item, remove_fridge_item_by_id, clear_fridge,
@@ -257,12 +259,15 @@ async def get_today(request: Request, client_date: Optional[str] = None):
         if user and user.get("timezone") != tz_name:
             update_user_timezone(user_id, tz_name)
 
+    vacation = is_vacation(user_id, today)
+
     return {
         "date": today,
         "day_name": date.fromisoformat(today).strftime("%A"),
         "workout": workout,
         "is_social": is_social,
         "is_rest_day": workout is None,
+        "is_vacation": vacation,
         "totals": totals,
         "entries": entries,
         "targets": {
@@ -273,6 +278,20 @@ async def get_today(request: Request, client_date: Optional[str] = None):
             "fiber": targets["fiber_target"],
         },
     }
+
+
+# ── Vacation ───────────────────────────────────
+
+@app.post("/api/vacation")
+async def toggle_vacation(request: Request, log_date: Optional[str] = None):
+    user_id = require_auth(request)
+    d = log_date or get_client_date(request)
+    if is_vacation(user_id, d):
+        unset_vacation(user_id, d)
+        return {"status": "removed", "is_vacation": False}
+    else:
+        set_vacation(user_id, d)
+        return {"status": "set", "is_vacation": True}
 
 
 # ── Workout ─────────────────────────────────────
@@ -326,6 +345,8 @@ async def sync_apple_health(request: Request, token: Optional[str] = None, user_
     dur = int(float(body.get("total_duration_min", 0)))
     raw_date = body.get("date", "")
     d = raw_date if isinstance(raw_date, str) and len(raw_date) == 10 else get_client_date(request)
+    if is_vacation(user_id, d):
+        return {"status": "skipped", "message": "Vacation day — sync skipped"}
     workouts = body.get("workouts", [])
     if cal <= 0:
         return {"status": "skipped", "message": "No active calories to sync"}
@@ -418,10 +439,12 @@ async def get_analysis(request: Request, days: int = 7):
         start = end = ref_date
     workout_map = get_workouts_range(user_id, start, end)
     drinks_map = get_drinks_range(user_id, start, end)
+    vacation_set = get_vacation_range(user_id, start, end)
 
-    # Add deficit and drink data to each day
+    # Add deficit and drink data to each day, mark vacations
     base_cal = targets["calories_max"]
     for day in history:
+        day["is_vacation"] = day["log_date"] in vacation_set
         wk_cal = workout_map.get(day["log_date"], 0)
         day["workout_calories"] = wk_cal
         day["adjusted_target"] = base_cal + wk_cal
@@ -430,10 +453,14 @@ async def get_analysis(request: Request, days: int = 7):
         day["drinks"] = dr["count"] if dr else 0
         day["drink_calories"] = dr["calories"] if dr else 0
 
+    # Filter out vacation days for metrics
+    active_history = [d for d in history if not d["is_vacation"]]
+
     return {
         "user_id": user_id,
         "days": days,
         "history": history,
+        "active_days": len(active_history),
         "targets": {
             "calories": targets["calories_max"],
             "protein": targets["protein_target"],

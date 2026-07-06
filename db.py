@@ -120,6 +120,14 @@ def init_db():
             UNIQUE(user_id, log_date)
         );
 
+        CREATE TABLE IF NOT EXISTS vacation_days (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            log_date TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, log_date)
+        );
+
         CREATE TABLE IF NOT EXISTS users (
             google_id TEXT PRIMARY KEY,
             email TEXT NOT NULL,
@@ -546,3 +554,42 @@ def update_user_timezone(google_id, timezone):
     )
     conn.commit()
     conn.close()
+
+
+# ── Vacation ────────────────────────────────────
+
+def set_vacation(user_id, log_date):
+    conn = get_conn()
+    conn.execute(
+        "INSERT OR IGNORE INTO vacation_days (user_id, log_date) VALUES (?, ?)",
+        (user_id, log_date),
+    )
+    conn.commit()
+    conn.close()
+
+def unset_vacation(user_id, log_date):
+    conn = get_conn()
+    conn.execute(
+        "DELETE FROM vacation_days WHERE user_id = ? AND log_date = ?",
+        (user_id, log_date),
+    )
+    conn.commit()
+    conn.close()
+
+def is_vacation(user_id, log_date):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM vacation_days WHERE user_id = ? AND log_date = ?",
+        (user_id, log_date),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+def get_vacation_range(user_id, start_date, end_date):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT log_date FROM vacation_days WHERE user_id = ? AND log_date >= ? AND log_date <= ?",
+        (user_id, start_date, end_date),
+    ).fetchall()
+    conn.close()
+    return {r["log_date"] for r in rows}

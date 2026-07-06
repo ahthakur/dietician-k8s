@@ -351,16 +351,10 @@ if(t==="analysis")loadAnalysis();if(t==="fridge")loadFridge();render()}
 // ── Data ──────────────────────────────────────────────
 async function loadToday(){
 try{
-const clientDate = getLocalDate();
-S.today=await api(`/api/today?client_date=${clientDate}`);
-if(S.logDate && S.logDate !== clientDate){
-const pastData = await api(`/api/food-log?log_date=${S.logDate}`);
-S.today._viewEntries = pastData.entries || [];
-S.today._viewTotals = pastData.totals || {calories:0,protein:0,fiber:0};
-} else {
+const viewDate = S.logDate || getLocalDate();
+S.today=await api(`/api/today?client_date=${viewDate}`);
 S.today._viewEntries = S.today.entries;
 S.today._viewTotals = S.today.totals;
-}
 render()}catch(e){}}
 
 function changeLogDate(offset){
@@ -385,8 +379,12 @@ const t=S.today._viewTotals||S.today.totals,tg=S.today.targets,u={color:"#3B82F6
 
 let h='';
 const srcIcon=S.today.workout?.source==='apple_health'?' 🍎':'';
+if(S.today.is_vacation){
+h+=`<div class="workout-bar" style="background:rgba(251,191,36,0.1);border-color:rgba(251,191,36,0.2);cursor:pointer" onclick="toggleVacation()">🏖️ Vacation Day — tracking paused<span style="float:right;opacity:0.4">✕</span></div>`}
+else{
 if(S.today.workout){h+=`<div class="workout-bar wb-active" onclick="showWorkoutModal()" style="cursor:pointer">🔥 ${S.today.workout.label}${S.today.workout.calories_burned?` · ${S.today.workout.calories_burned} cal burned${srcIcon}`:''}${S.today.is_social?' · 🍷 Social evening':''}<span style="float:right;opacity:0.4">✏️</span></div>`}
 else{h+=`<div class="workout-bar wb-rest" onclick="showWorkoutModal()" style="cursor:pointer">🧘 Rest Day<span style="float:right;opacity:0.4">✏️</span></div>`}
+}
 
 const calMax=tg.calories_adjusted||tg.calories;
 const wkCal=tg.workout_calories||0;
@@ -533,15 +531,18 @@ h+=svg}
 h += lineChart('PROTEIN', 'total_protein', tg.protein, '#4ADE80', 'g');
 h += lineChart('FIBER', 'total_fiber', tg.fiber, '#FBBF24', 'g');
 
-const avgCal=Math.round(data.reduce((s,d)=>s+d.total_cal,0)/data.length);
-const avgProt=Math.round(data.reduce((s,d)=>s+d.total_protein,0)/data.length);
-const avgFib=Math.round(data.reduce((s,d)=>s+d.total_fiber,0)/data.length);
-const totalDeficit=data.reduce((s,d)=>s+(d.deficit||0),0);
-const avgDeficit=Math.round(totalDeficit/data.length);
-const totalWkCal=data.reduce((s,d)=>s+(d.workout_calories||0),0);
+const active=data.filter(d=>!d.is_vacation);
+const aN=active.length||1;
+const vacDays=data.length-active.length;
+const avgCal=Math.round(active.reduce((s,d)=>s+d.total_cal,0)/aN);
+const avgProt=Math.round(active.reduce((s,d)=>s+d.total_protein,0)/aN);
+const avgFib=Math.round(active.reduce((s,d)=>s+d.total_fiber,0)/aN);
+const totalDeficit=active.reduce((s,d)=>s+(d.deficit||0),0);
+const avgDeficit=Math.round(totalDeficit/aN);
+const totalWkCal=active.reduce((s,d)=>s+(d.workout_calories||0),0);
 
 h+=`<div class="avg-card">
-<div class="avg-title">Averages (${data.length} days)</div>
+<div class="avg-title">Averages (${active.length} days${vacDays?` · ${vacDays} vacation`:''})</div>
 <div class="avg-row">
 <div class="avg-item"><span style="color:${u.color};text-shadow:0 0 20px ${u.color}30">${avgCal}</span><span> cal/day</span></div>
 <div class="avg-item"><span style="color:#4ADE80;text-shadow:0 0 20px rgba(74,222,128,0.2)">${avgProt}g</span><span> protein</span></div>
@@ -562,11 +563,12 @@ h+=`<div class="avg-card">
 </div>`}
 
 const totalDrinks=data.reduce((s,d)=>s+(d.drinks||0),0);
-const totalDrinkCal=data.reduce((s,d)=>s+(d.drink_calories||0),0);
+const totalDrinkCal=active.reduce((s,d)=>s+(d.drink_calories||0),0);
 if(totalDrinks>0){
-const drinkDays=data.filter(d=>d.drinks>0).length;
-const avgDrinksPerDrinkDay=(totalDrinks/drinkDays).toFixed(1);
-const pctCal=Math.round(totalDrinkCal/data.reduce((s,d)=>s+d.total_cal,0)*100);
+const drinkDays=active.filter(d=>d.drinks>0).length;
+const avgDrinksPerDrinkDay=(totalDrinks/(drinkDays||1)).toFixed(1);
+const totalActiveCal=active.reduce((s,d)=>s+d.total_cal,0);
+const pctCal=totalActiveCal?Math.round(totalDrinkCal/totalActiveCal*100):0;
 h+=`<div class="avg-card">
 <div class="avg-title" style="color:#FB923C">🍺 Drinks Summary</div>
 <div class="avg-row">
@@ -574,7 +576,7 @@ h+=`<div class="avg-card">
 <div class="avg-item"><span style="color:#FB923C">${totalDrinkCal}</span><span> cal from drinks</span></div>
 <div class="avg-item"><span style="color:#FB923C">${pctCal}%</span><span> of total cal</span></div>
 </div>
-<div style="text-align:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,0.5)">${drinkDays} of ${data.length} days · ~${avgDrinksPerDrinkDay} drinks on those days</div>
+<div style="text-align:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,0.5)">${drinkDays} of ${active.length} days · ~${avgDrinksPerDrinkDay} drinks on those days</div>
 </div>`}
 
 return h}
@@ -694,6 +696,7 @@ mc.innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()
 <label style="margin-top:4px">Calories Burned</label><input id="wkCal" type="number" value="${w.calories_burned||0}" placeholder="0">
 <button class="btn btn-green btn-full" style="margin-top:20px" onclick="saveWorkout()">Save Workout</button>
 <button class="btn btn-full" style="margin-top:8px;background:rgba(239,68,68,0.2);color:#f87171" onclick="markRestDay()">Mark as Rest Day</button>
+<button class="btn btn-full" style="margin-top:8px;background:rgba(251,191,36,0.15);color:#FBBF24" onclick="toggleVacation()">🏖️ Mark as Vacation</button>
 <button class="btn btn-g btn-full" style="margin-top:8px" onclick="closeModal()">Cancel</button>
 </div></div>`}
 
@@ -728,6 +731,12 @@ const viewDate=S.logDate||getLocalDate();
 closeModal();
 try{await api(`/api/workout?log_date=${viewDate}`,{method:"DELETE"});
 toast("Marked as rest day","rgba(74,222,128,0.9)");await loadToday()}catch(e){toast("Failed to update","rgba(239,68,68,0.9)")}}
+
+async function toggleVacation(){
+const viewDate=S.logDate||getLocalDate();
+closeModal();
+try{const r=await api(`/api/vacation?log_date=${viewDate}`,{method:"POST"});
+toast(r.is_vacation?"🏖️ Vacation mode on":"Vacation mode off","rgba(251,191,36,0.9)");await loadToday()}catch(e){toast("Failed to update","rgba(239,68,68,0.9)")}}
 
 // ── Meal Ideas Modal ─────────────────────────────────
 function showMealIdeasModal(){
