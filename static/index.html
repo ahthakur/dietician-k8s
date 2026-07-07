@@ -460,7 +460,7 @@ h+=`<div class="tl-entry" style="--ec:${srcColor}">
 ${time?`<span style="margin-left:auto;color:rgba(255,255,255,0.2)">${time}</span>`:''}
 </div>
 <div class="tl-entry-actions">
-<button class="tl-action-btn" onclick="editEntry(${e.id},${e.calories},${e.protein},${e.fiber},'${(e.description||'').replace(/'/g,"\\'")}')">✏️ Edit</button>
+<button class="tl-action-btn" onclick="editEntry(${e.id},${e.calories},${e.protein},${e.fiber},'${(e.description||'').replace(/'/g,"\\'")}',${e.quantity||1})">✏️ Edit</button>
 <button class="tl-action-btn" onclick="shareEntry('${(e.description||'').replace(/'/g,"\\'")}',${e.calories},${e.protein},${e.fiber})">📤 Share</button>
 <button class="tl-action-btn tl-del" onclick="deleteEntry(${e.id})">🗑 Delete</button>
 </div>
@@ -780,17 +780,19 @@ else{navigator.clipboard.writeText(text).then(()=>toast("Copied to clipboard","r
 
 async function deleteEntry(id){if(!confirm("Delete?"))return;await api(`/api/food-log/${id}`,{method:"DELETE"});await loadToday()}
 
-function editEntry(id,cal,prot,fib,desc){
+function editEntry(id,cal,prot,fib,desc,qty){
+qty=qty||1;
+const baseCal=Math.round(cal/qty),baseProt=Math.round(prot/qty),baseFib=Math.round(fib/qty);
 const mc=document.getElementById("modalContainer");
 mc.innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
 <h3>Edit Entry</h3>
 <label>Description</label><input id="editDesc" value="${desc.replace(/"/g,'&quot;')}">
 <label style="margin-top:4px">Quantity</label>
-<div class="selector-toggle" id="qtyToggle" data-base-cal="${cal}" data-base-prot="${prot}" data-base-fib="${fib}">
-<button class="active" onclick="setQty(this,1)" data-val="1">1</button>
-<button onclick="setQty(this,2)" data-val="2">2</button>
-<button onclick="setQty(this,3)" data-val="3">3</button>
-<button onclick="setQty(this,4)" data-val="4">4</button>
+<div class="selector-toggle" id="qtyToggle" data-base-cal="${baseCal}" data-base-prot="${baseProt}" data-base-fib="${baseFib}">
+<button ${qty===1?'class="active"':''} onclick="setQty(this,1)" data-val="1">1</button>
+<button ${qty===2?'class="active"':''} onclick="setQty(this,2)" data-val="2">2</button>
+<button ${qty===3?'class="active"':''} onclick="setQty(this,3)" data-val="3">3</button>
+<button ${qty===4?'class="active"':''} onclick="setQty(this,4)" data-val="4">4</button>
 </div>
 <div style="display:flex;gap:8px;margin-top:4px">
 <div style="flex:1"><label>Calories</label><input id="editCal" type="number" value="${cal}"></div>

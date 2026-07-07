@@ -24,10 +24,12 @@ def init_db():
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS fridge_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
+            user_id TEXT NOT NULL DEFAULT '',
+            name TEXT NOT NULL,
             quantity TEXT DEFAULT '',
             category TEXT DEFAULT 'other',
-            added_at TEXT DEFAULT (datetime('now'))
+            added_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, name)
         );
 
         CREATE TABLE IF NOT EXISTS food_log (
@@ -145,6 +147,7 @@ def init_db():
 
     for col_sql in [
         "ALTER TABLE fridge_items ADD COLUMN quantity TEXT DEFAULT ''",
+        "ALTER TABLE fridge_items ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE food_log ADD COLUMN fiber INTEGER DEFAULT 0",
         "ALTER TABLE quick_log_history ADD COLUMN fiber INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN calories_min INTEGER DEFAULT 1800",
@@ -157,27 +160,32 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_fridge_user_name ON fridge_items(user_id, name)")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
 
 
 # ── Fridge ───────────────────────────────────────
 
-def get_fridge_items():
+def get_fridge_items(user_id):
     conn = get_conn()
-    rows = conn.execute("SELECT id, name, quantity, category, added_at FROM fridge_items ORDER BY category, name").fetchall()
+    rows = conn.execute("SELECT id, name, quantity, category, added_at FROM fridge_items WHERE user_id = ? ORDER BY category, name", (user_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
-def add_fridge_item(name, category="other", quantity=""):
+def add_fridge_item(user_id, name, category="other", quantity=""):
     conn = get_conn()
     try:
-        conn.execute("INSERT INTO fridge_items (name, category, quantity) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET quantity = excluded.quantity, added_at = datetime('now')", (name.strip(), category, quantity))
+        conn.execute("INSERT INTO fridge_items (user_id, name, category, quantity) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, name) DO UPDATE SET quantity = excluded.quantity, added_at = datetime('now')", (user_id, name.strip(), category, quantity))
         conn.commit()
     finally:
         conn.close()
 
-def add_fridge_items_bulk(items):
+def add_fridge_items_bulk(user_id, items):
     conn = get_conn()
     try:
         for item in items:
@@ -186,9 +194,9 @@ def add_fridge_items_bulk(items):
                 qty = item.get("quantity", "")
                 cat = item.get("category", "other")
                 if name:
-                    conn.execute("INSERT INTO fridge_items (name, quantity, category) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET quantity = excluded.quantity, category = excluded.category, added_at = datetime('now')", (name, qty, cat))
+                    conn.execute("INSERT INTO fridge_items (user_id, name, quantity, category) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, name) DO UPDATE SET quantity = excluded.quantity, category = excluded.category, added_at = datetime('now')", (user_id, name, qty, cat))
             elif isinstance(item, str) and item.strip():
-                conn.execute("INSERT OR IGNORE INTO fridge_items (name) VALUES (?)", (item.strip(),))
+                conn.execute("INSERT INTO fridge_items (user_id, name) VALUES (?, ?) ON CONFLICT(user_id, name) DO NOTHING", (user_id, item.strip()))
         conn.commit()
     finally:
         conn.close()
@@ -208,9 +216,9 @@ def update_fridge_item(item_id, name=None, quantity=None, category=None):
         conn.commit()
     conn.close()
 
-def remove_fridge_item(name):
+def remove_fridge_item(user_id, name):
     conn = get_conn()
-    conn.execute("DELETE FROM fridge_items WHERE name = ?", (name,))
+    conn.execute("DELETE FROM fridge_items WHERE user_id = ? AND name = ?", (user_id, name))
     conn.commit()
     conn.close()
 
@@ -220,9 +228,9 @@ def remove_fridge_item_by_id(item_id):
     conn.commit()
     conn.close()
 
-def clear_fridge():
+def clear_fridge(user_id):
     conn = get_conn()
-    conn.execute("DELETE FROM fridge_items")
+    conn.execute("DELETE FROM fridge_items WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
 
@@ -242,7 +250,7 @@ def add_food_log_entry(log_date, user_id, description, calories, protein, fiber=
 def get_food_log(log_date, user_id):
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id, description, calories, protein, fiber, carbs, fat, source, photo_analysis, meal_ref, time_logged FROM food_log WHERE log_date = ? AND user_id = ? ORDER BY time_logged DESC",
+        "SELECT id, description, calories, protein, fiber, carbs, fat, source, photo_analysis, meal_ref, time_logged, COALESCE(quantity, 1) as quantity FROM food_log WHERE log_date = ? AND user_id = ? ORDER BY time_logged DESC",
         (log_date, user_id),
     ).fetchall()
     conn.close()

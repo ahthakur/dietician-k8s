@@ -90,7 +90,7 @@ async def process_chat_message(user_id: str, message: str, plan_date: Optional[d
         else:
             workout = WORKOUTS.get(dow)
 
-    fridge = get_fridge_items()
+    fridge = get_fridge_items(user_id)
     fridge_desc = ", ".join([f"{f['name']}" + (f" ({f['quantity']})" if f.get('quantity') else "") for f in fridge]) if fridge else "empty"
 
     workout_info = f"Workout today: {workout['label']}" if workout else "Rest day"
@@ -218,7 +218,7 @@ async def generate_grocery_list(user_id: str, week_start_date: Optional[date] = 
     cal_target = user["calories_max"] if user else 2000
     protein_target = user["protein_target"] if user else 150
 
-    fridge = get_fridge_items()
+    fridge = get_fridge_items(user_id)
     fridge_names = [f["name"] for f in fridge]
 
     prompt = f"""You are a personal dietician creating a weekly grocery list for {user_name}.

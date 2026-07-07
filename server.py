@@ -521,20 +521,20 @@ async def scan_receipt(request: Request, file: UploadFile = File(...)):
 
 @app.get("/api/fridge")
 async def get_fridge(request: Request):
-    require_auth(request)
-    return {"items": get_fridge_items()}
+    user_id = require_auth(request)
+    return {"items": get_fridge_items(user_id)}
 
 @app.post("/api/fridge")
 async def add_to_fridge(req: FridgeItemRequest, request: Request):
-    require_auth(request)
-    add_fridge_item(req.name, req.category, req.quantity)
+    user_id = require_auth(request)
+    add_fridge_item(user_id, req.name, req.category, req.quantity)
     return {"status": "added"}
 
 @app.post("/api/fridge/bulk")
 async def bulk_add_fridge(req: BulkFridgeRequest, request: Request):
-    require_auth(request)
+    user_id = require_auth(request)
     items_dicts = [{"name": i.name, "quantity": i.quantity, "category": i.category} for i in req.items]
-    add_fridge_items_bulk(items_dicts)
+    add_fridge_items_bulk(user_id, items_dicts)
     if req.source == "receipt" and req.store:
         purchase_items = [{"name": i.name, "quantity": i.quantity} for i in req.items]
         log_purchases_bulk(purchase_items, req.store)
@@ -548,8 +548,8 @@ async def update_fridge(item_id: int, req: UpdateFridgeItemRequest, request: Req
 
 @app.delete("/api/fridge/{item_name}")
 async def remove_from_fridge(item_name: str, request: Request):
-    require_auth(request)
-    remove_fridge_item(item_name)
+    user_id = require_auth(request)
+    remove_fridge_item(user_id, item_name)
     return {"status": "removed"}
 
 @app.delete("/api/fridge/id/{item_id}")
@@ -560,8 +560,8 @@ async def remove_fridge_by_id(item_id: int, request: Request):
 
 @app.delete("/api/fridge")
 async def clear_all_fridge(request: Request):
-    require_auth(request)
-    clear_fridge()
+    user_id = require_auth(request)
+    clear_fridge(user_id)
     return {"status": "cleared"}
 
 

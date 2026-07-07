@@ -17,16 +17,34 @@ Server starts on `http://0.0.0.0:80` (override with `PORT` env var). No build st
 
 Google OAuth requires `OAuth-client.json` in the project root (gitignored) or `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` env vars. `BASE_URL` defaults to `https://dietician.abhijitt.com`.
 
+No test suite exists.
+
 ## Architecture
 
 **Python backend (FastAPI + SQLite + Claude API), single-page HTML frontend.**
 
-- `server.py` — FastAPI app, all API routes, lifespan (DB init). Routes are defined inline, not split into routers. Includes `get_client_date(request)` helper that reads `X-Timezone` header to compute the user's local date.
+- `server.py` (~614 lines) — FastAPI app, all API routes inline (no routers). Pydantic models for request validation. `get_client_date(request)` helper reads `X-Timezone` header to compute the user's local date.
 - `config.py` — Env vars, meal schedule, workout schedule (global defaults), social days, cuisine preference, `SYNC_TOKEN` for external API auth. User-specific targets (calories, protein, fiber) live in the DB `users` table, not here.
-- `meal_engine.py` — Claude API integration. Calls `api.anthropic.com/v1/messages` directly via `httpx` (no SDK). Handles chat intent classification (log food / suggest meals / general chat) and vision endpoints (food photo, fridge photo, receipt scan). Model is set to `claude-sonnet-4-5-20250929`.
-- `db.py` — SQLite data layer. All tables created in `init_db()`. Each function opens its own connection via `get_conn()` (WAL mode). Tables: `food_log`, `fridge_items`, `users`, `chat_history`, `quick_log_history`, `purchase_log`, `grocery_lists`, `reminder_log`, `meal_history`, `weekly_protein_log`, `workout_log`.
+- `meal_engine.py` (~241 lines) — Claude API integration. Calls `api.anthropic.com/v1/messages` directly via `httpx` (no SDK). Model is `claude-sonnet-4-5-20250929`. Two core functions: `_call_claude()` for text, `_call_claude_vision()` for images.
+- `db.py` (~596 lines) — SQLite data layer. All tables created in `init_db()`. Each function opens its own connection via `get_conn()` (WAL mode). No connection pooling or shared connections.
 - `auth.py` — Google OAuth via Authlib. Session-based auth; `require_auth(request)` extracts `user_id` (Google sub) from session and raises 401 if missing.
-- `static/index.html` — Complete SPA in a single HTML file (inline CSS + JS). Glassmorphic dark UI, mobile-first. Calls `/api/*` endpoints. Sends `X-Timezone` header on every request.
+- `static/index.html` (~944 lines) — Complete SPA in a single HTML file (inline CSS + JS). Glassmorphic dark UI, mobile-first. Sends `X-Timezone` header on every fetch request.
+
+## API Route Groups
+
+All routes are in `server.py`. Auth routes are mounted from `auth.py` functions:
+
+- `/auth/*` — login, callback, me, logout (Google OAuth)
+- `/api/chat` — Main chat interface (POST). Intent classification returns `log`, `suggest`, or `chat` JSON
+- `/api/today` — Dashboard data (GET). Returns food log, targets, workout, fridge, chat history for a date
+- `/api/food-log` — CRUD for food entries. PUT supports `re_estimate: true` to re-run Claude estimation
+- `/api/photo/{food,fridge,receipt}` — Vision analysis endpoints. All return analysis without auto-saving
+- `/api/fridge` — CRUD + bulk add. Fridge items are per-user (keyed on `user_id`)
+- `/api/workout` — CRUD + Apple Health sync at `/api/workout/sync`
+- `/api/vacation` — Toggle vacation mode (excludes day from analysis metrics)
+- `/api/analysis` — Multi-day macro history with deficit calculations
+- `/api/grocery` — Generate/retrieve weekly grocery lists
+- `/api/suggestions` — Quick log autocomplete from `quick_log_history`
 
 ## Deployment
 
@@ -34,15 +52,15 @@ Production deploys via SCP to a GCP VM named `dietician` in `us-central1-f`, the
 
 ## Key Patterns
 
-- User identification: Google OAuth `sub` claim stored in session as `user_id`. Per-user nutrition targets stored in DB `users` table (calories_min, calories_max, protein_target, fiber_target, timezone).
-- Timezone handling: Frontend sends IANA timezone via `X-Timezone` header. Server's `get_client_date(request)` uses it to compute the correct local date. User's timezone is persisted in DB for future use.
-- Claude API calls go through `_call_claude()` and `_call_claude_vision()` in `meal_engine.py` — raw HTTP, not the Anthropic SDK.
-- Chat responses from Claude are expected as raw JSON (no markdown fences). The engine strips fences as a fallback and parses. Three response types: `log` (food entry), `suggest` (meal ideas), `chat` (general).
-- Photo scan flow: Backend analyzes but does NOT auto-save. Frontend shows a review modal for editing before confirming. Applies to food photos, fridge photos, and receipt scans.
-- Fridge items are categorized (produce, protein, dairy, pantry, frozen, beverages, other) and editable.
-- Workout tracking: `workout_log` table with resolution chain (DB entry for today → previous day's DB entry → config defaults). Supports manual entry and Apple Health sync via iOS Shortcuts.
-- Apple Health sync: `POST /api/workout/sync` accepts token+email auth (no browser session). Uses `SYNC_TOKEN` env var. Fuzzy JSON key matching for robust iOS Shortcut compatibility.
-- Calorie deficit: adjusted target = base calories + workout active calories. Analysis tab shows deficit per day (line chart) and cumulative summary with weight loss estimate (3500 cal = 1 lb).
-- Food log entries have share (native Web Share API) and quantity multiplier (1-4x in edit modal).
-- Food log ordered descending (latest at top).
-- No test suite exists.
+- **User identification**: Google OAuth `sub` claim stored in session as `user_id`. Per-user nutrition targets stored in DB `users` table (calories_min, calories_max, protein_target, fiber_target, timezone).
+- **Timezone handling**: Frontend sends IANA timezone via `X-Timezone` header. Server's `get_client_date(request)` uses it to compute the correct local date. User's timezone is persisted in DB for future use.
+- **Claude API responses**: Expected as raw JSON (no markdown fences). The engine strips fences as a fallback. Three chat response types: `log` (food entry), `suggest` (meal ideas), `chat` (general). The system prompt includes current macro totals and fridge inventory for context.
+- **Photo scan flow**: Backend analyzes but does NOT auto-save. Frontend shows a review modal for editing before confirming. Applies to food photos, fridge photos, and receipt scans.
+- **DB migrations**: `init_db()` uses try/except around ALTER TABLE statements to add columns idempotently — if the column already exists, the OperationalError is silently caught. New columns must be added this way.
+- **Fridge is per-user**: `fridge_items` table is keyed on `(user_id, name)`. All fridge DB functions take `user_id` as first argument.
+- **Quick log dedup**: `quick_log_history` stores descriptions lowercased, uses UPSERT to increment `times_used` on repeats. Powers the autocomplete suggestions endpoint.
+- **Drink detection**: `db.py` has a `DRINK_KEYWORDS` tuple (~40 terms). `get_drinks_range()` scans food log descriptions for keyword matches to compute drink counts/calories per day for analysis.
+- **Workout resolution chain**: DB entry for today → most recent previous DB entry → config defaults by weekday. Supports manual entry and Apple Health sync via iOS Shortcuts.
+- **Apple Health sync**: `POST /api/workout/sync` accepts token+email auth (no browser session). Uses `SYNC_TOKEN` env var. Fuzzy JSON key matching (`"calori" in key.lower()`) for robust iOS Shortcut compatibility.
+- **Calorie deficit**: adjusted target = base calories + workout active calories. Analysis tab shows deficit per day and cumulative summary with weight loss estimate (3500 cal = 1 lb). Vacation days are excluded from metrics.
+- **Food log entries**: Support share (native Web Share API), quantity multiplier (1-4x in edit modal), and re-estimation (sends description back to Claude for fresh calorie estimate). Ordered descending (latest at top).
