@@ -140,6 +140,7 @@ def init_db():
             protein_target INTEGER DEFAULT 150,
             fiber_target INTEGER DEFAULT 30,
             timezone TEXT DEFAULT 'America/Chicago',
+            fridge_group TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
@@ -154,6 +155,7 @@ def init_db():
         "ALTER TABLE users ADD COLUMN timezone TEXT DEFAULT 'America/Chicago'",
         "ALTER TABLE workout_log ADD COLUMN source TEXT DEFAULT 'manual'",
         "ALTER TABLE food_log ADD COLUMN quantity INTEGER DEFAULT 1",
+        "ALTER TABLE users ADD COLUMN fridge_group TEXT DEFAULT ''",
     ]:
         try:
             conn.execute(col_sql)
@@ -560,6 +562,39 @@ def update_user_timezone(google_id, timezone):
         "UPDATE users SET timezone = ?, updated_at = datetime('now') WHERE google_id = ?",
         (timezone, google_id),
     )
+    conn.commit()
+    conn.close()
+
+
+# ── Fridge Sharing ─────────────────────────────
+
+def get_fridge_id(user_id):
+    user = get_user(user_id)
+    if user and user.get("fridge_group"):
+        return user["fridge_group"]
+    return user_id
+
+def set_fridge_group(user_id, group_id):
+    conn = get_conn()
+    conn.execute("UPDATE users SET fridge_group = ?, updated_at = datetime('now') WHERE google_id = ?", (group_id, user_id))
+    conn.commit()
+    conn.close()
+
+def get_fridge_group_members(group_id):
+    conn = get_conn()
+    rows = conn.execute("SELECT google_id, name, email, picture FROM users WHERE fridge_group = ?", (group_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def migrate_fridge_items(old_owner, new_owner):
+    conn = get_conn()
+    rows = conn.execute("SELECT name, quantity, category FROM fridge_items WHERE user_id = ?", (old_owner,)).fetchall()
+    for r in rows:
+        conn.execute(
+            "INSERT INTO fridge_items (user_id, name, quantity, category) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, name) DO NOTHING",
+            (new_owner, r["name"], r["quantity"], r["category"]),
+        )
+    conn.execute("DELETE FROM fridge_items WHERE user_id = ?", (old_owner,))
     conn.commit()
     conn.close()
 

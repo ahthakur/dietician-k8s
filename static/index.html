@@ -298,7 +298,7 @@ return [now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.ge
 }
 
 let currentUser = null;
-let S={tab:"home",today:null,fridge:[],chatMsgs:[],sending:false,analysisData:null,analysisDays:7,logDate:null,grocLoading:false,grocery:null};
+let S={tab:"home",today:null,fridge:[],fridgeShare:null,chatMsgs:[],sending:false,analysisData:null,analysisDays:7,logDate:null,grocLoading:false,grocery:null};
 
 async function api(p,o={}){
 const hdrs={"Content-Type":"application/json","X-Timezone":USER_TZ,...(o.headers||{})};
@@ -366,7 +366,9 @@ const newDate = [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d
 if(newDate > today) return;
 S.logDate = newDate;
 loadToday()}
-async function loadFridge(){try{const d=await api("/api/fridge");S.fridge=d.items||[];render()}catch(e){}}
+async function loadFridge(){try{const d=await api("/api/fridge");S.fridge=d.items||[]}catch(e){}
+try{const sh=await api("/api/fridge/share");S.fridgeShare=sh}catch(e){S.fridgeShare={shared:false}}
+render()}
 async function loadAnalysis(){try{S.analysisData=await api(`/api/analysis?days=${S.analysisDays}`);render()}catch(e){}}
 
 // ── Renderers ─────────────────────────────────────────
@@ -595,6 +597,17 @@ h+=`<div class="fridge-add">
 <input id="fridgeInput" placeholder="Item name..." onkeydown="if(event.key==='Enter')addFridgeItem()" style="flex:3;min-width:0">
 <input id="fridgeQtyInput" placeholder="Qty" onkeydown="if(event.key==='Enter')addFridgeItem()" style="flex:1;min-width:0;max-width:80px">
 <button style="background:#3B82F6;flex-shrink:0" onclick="addFridgeItem()">+</button></div>`;
+
+if(S.fridgeShare&&S.fridgeShare.shared){
+h+=`<div style="padding:10px 14px;background:linear-gradient(135deg,rgba(59,130,246,0.12) 0%,rgba(59,130,246,0.04) 100%);border:1px solid rgba(59,130,246,0.2);border-radius:var(--radius-sm);margin-bottom:12px;font-size:12px">
+<div style="display:flex;justify-content:space-between;align-items:center">
+<span style="color:rgba(255,255,255,0.7)">Shared fridge &middot; ${S.fridgeShare.members.map(m=>m.name.split(' ')[0]).join(', ')}</span>
+<button class="btn btn-g btn-sm" onclick="showFridgeShareModal()">Manage</button>
+</div></div>`}
+else{h+=`<div style="display:flex;gap:8px;margin-bottom:12px">
+<button class="btn btn-g btn-sm" style="flex:1" onclick="createFridgeShare()">Share Fridge</button>
+<button class="btn btn-g btn-sm" style="flex:1" onclick="showJoinFridgeModal()">Join Shared</button>
+</div>`}
 
 h+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
 <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.4)">${S.fridge.length} ITEMS</span>
@@ -869,6 +882,59 @@ const cat=document.getElementById("efCat").value;
 closeModal();
 try{await api(`/api/fridge/${id}`,{method:"PUT",body:JSON.stringify({name:name||undefined,quantity:qty,category:cat})});
 toast("Item updated","rgba(74,222,128,0.9)");await loadFridge()}catch(e){toast("Failed to update","rgba(239,68,68,0.9)")}}
+
+// ── Fridge sharing ──────────────────────────────────
+async function createFridgeShare(){
+try{const r=await api("/api/fridge/share",{method:"POST"});
+showFridgeCodeModal(r.code)}catch(e){toast("Failed to create share","rgba(239,68,68,0.9)")}}
+
+function showFridgeCodeModal(code){
+const mc=document.getElementById("modalContainer");
+mc.innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+<h3>Share Your Fridge</h3>
+<div style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:16px">Share this code with your household members so they can join your fridge.</div>
+<div style="text-align:center;font-size:32px;font-weight:700;letter-spacing:0.15em;padding:20px;background:rgba(255,255,255,0.06);border-radius:var(--radius-sm);margin-bottom:16px;user-select:all">${code}</div>
+<button class="btn btn-green btn-full" onclick="navigator.clipboard.writeText('${code}');toast('Code copied','rgba(74,222,128,0.9)')">Copy Code</button>
+<button class="btn btn-g btn-full" style="margin-top:8px" onclick="closeModal()">Done</button>
+</div></div>`}
+
+function showJoinFridgeModal(){
+const mc=document.getElementById("modalContainer");
+mc.innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+<h3>Join Shared Fridge</h3>
+<div style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:16px">Enter the share code from a household member.</div>
+<input id="joinCode" placeholder="Enter code" style="text-align:center;font-size:20px;letter-spacing:0.1em;text-transform:uppercase">
+<button class="btn btn-green btn-full" style="margin-top:16px" onclick="joinFridge()">Join</button>
+<button class="btn btn-g btn-full" style="margin-top:8px" onclick="closeModal()">Cancel</button>
+</div></div>`}
+
+async function joinFridge(){
+const code=document.getElementById("joinCode").value.trim();
+if(!code){toast("Enter a code","rgba(239,68,68,0.9)");return}
+closeModal();
+try{await api("/api/fridge/join",{method:"POST",body:JSON.stringify({code})});
+toast("Joined shared fridge","rgba(74,222,128,0.9)");await loadFridge()}catch(e){toast("Invalid code","rgba(239,68,68,0.9)")}}
+
+function showFridgeShareModal(){
+const sh=S.fridgeShare;if(!sh)return;
+const mc=document.getElementById("modalContainer");
+const memberList=sh.members.map(m=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0">
+${m.picture?`<img src="${m.picture}" style="width:28px;height:28px;border-radius:50%">`:''}
+<span style="font-size:14px">${m.name}</span></div>`).join('');
+mc.innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">
+<h3>Shared Fridge</h3>
+<div style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:12px">Code: <span style="font-weight:700;color:rgba(255,255,255,0.8);letter-spacing:0.1em">${sh.code}</span></div>
+<div style="margin-bottom:16px">${memberList}</div>
+<button class="btn btn-green btn-full" onclick="navigator.clipboard.writeText('${sh.code}');toast('Code copied','rgba(74,222,128,0.9)')">Copy Code</button>
+<button class="btn btn-g btn-full" style="margin-top:8px;color:rgba(239,68,68,0.5)" onclick="leaveFridge()">Leave Shared Fridge</button>
+<button class="btn btn-g btn-full" style="margin-top:8px" onclick="closeModal()">Done</button>
+</div></div>`}
+
+async function leaveFridge(){
+if(!confirm("Leave shared fridge? You'll start with an empty fridge."))return;
+closeModal();
+try{await api("/api/fridge/leave",{method:"POST"});
+toast("Left shared fridge","rgba(74,222,128,0.9)");await loadFridge()}catch(e){toast("Failed","rgba(239,68,68,0.9)")}}
 
 // ── Scan review modals ───────────────────────────────
 async function uploadFridgePhoto(e){const f=e.target.files?.[0];if(!f)return;

@@ -30,6 +30,7 @@ from db import (
     init_db, get_fridge_items, add_fridge_item, add_fridge_items_bulk,
     remove_fridge_item, remove_fridge_item_by_id, clear_fridge,
     update_fridge_item,
+    get_fridge_id, set_fridge_group, get_fridge_group_members, migrate_fridge_items,
     add_food_log_entry, get_food_log, delete_food_log_entry,
     update_food_log_entry, get_food_log_totals, get_food_log_history,
     check_food_log_for_keyword,
@@ -522,19 +523,22 @@ async def scan_receipt(request: Request, file: UploadFile = File(...)):
 @app.get("/api/fridge")
 async def get_fridge(request: Request):
     user_id = require_auth(request)
-    return {"items": get_fridge_items(user_id)}
+    fid = get_fridge_id(user_id)
+    return {"items": get_fridge_items(fid)}
 
 @app.post("/api/fridge")
 async def add_to_fridge(req: FridgeItemRequest, request: Request):
     user_id = require_auth(request)
-    add_fridge_item(user_id, req.name, req.category, req.quantity)
+    fid = get_fridge_id(user_id)
+    add_fridge_item(fid, req.name, req.category, req.quantity)
     return {"status": "added"}
 
 @app.post("/api/fridge/bulk")
 async def bulk_add_fridge(req: BulkFridgeRequest, request: Request):
     user_id = require_auth(request)
+    fid = get_fridge_id(user_id)
     items_dicts = [{"name": i.name, "quantity": i.quantity, "category": i.category} for i in req.items]
-    add_fridge_items_bulk(user_id, items_dicts)
+    add_fridge_items_bulk(fid, items_dicts)
     if req.source == "receipt" and req.store:
         purchase_items = [{"name": i.name, "quantity": i.quantity} for i in req.items]
         log_purchases_bulk(purchase_items, req.store)
@@ -549,7 +553,8 @@ async def update_fridge(item_id: int, req: UpdateFridgeItemRequest, request: Req
 @app.delete("/api/fridge/{item_name}")
 async def remove_from_fridge(item_name: str, request: Request):
     user_id = require_auth(request)
-    remove_fridge_item(user_id, item_name)
+    fid = get_fridge_id(user_id)
+    remove_fridge_item(fid, item_name)
     return {"status": "removed"}
 
 @app.delete("/api/fridge/id/{item_id}")
@@ -561,8 +566,57 @@ async def remove_fridge_by_id(item_id: int, request: Request):
 @app.delete("/api/fridge")
 async def clear_all_fridge(request: Request):
     user_id = require_auth(request)
-    clear_fridge(user_id)
+    fid = get_fridge_id(user_id)
+    clear_fridge(fid)
     return {"status": "cleared"}
+
+
+# ── Fridge Sharing ──────────────────────────────
+
+@app.get("/api/fridge/share")
+async def get_fridge_share_info(request: Request):
+    user_id = require_auth(request)
+    user = get_user(user_id)
+    group = user.get("fridge_group", "") if user else ""
+    if group:
+        members = get_fridge_group_members(group)
+        return {"shared": True, "code": group, "members": [{"name": m["name"], "picture": m["picture"]} for m in members]}
+    return {"shared": False, "code": "", "members": []}
+
+@app.post("/api/fridge/share")
+async def create_fridge_share(request: Request):
+    import secrets
+    user_id = require_auth(request)
+    user = get_user(user_id)
+    if user.get("fridge_group"):
+        return {"code": user["fridge_group"]}
+    code = secrets.token_hex(3).upper()
+    old_fid = get_fridge_id(user_id)
+    set_fridge_group(user_id, code)
+    migrate_fridge_items(old_fid, code)
+    return {"code": code}
+
+class JoinFridgeRequest(BaseModel):
+    code: str
+
+@app.post("/api/fridge/join")
+async def join_fridge_share(req: JoinFridgeRequest, request: Request):
+    user_id = require_auth(request)
+    code = req.code.strip().upper()
+    members = get_fridge_group_members(code)
+    if not members:
+        raise HTTPException(status_code=404, detail="Invalid share code")
+    old_fid = get_fridge_id(user_id)
+    set_fridge_group(user_id, code)
+    if old_fid != code:
+        migrate_fridge_items(old_fid, code)
+    return {"status": "joined", "members": [{"name": m["name"], "picture": m["picture"]} for m in get_fridge_group_members(code)]}
+
+@app.post("/api/fridge/leave")
+async def leave_fridge_share(request: Request):
+    user_id = require_auth(request)
+    set_fridge_group(user_id, "")
+    return {"status": "left"}
 
 
 # ── Grocery ──────────────────────────────────────
