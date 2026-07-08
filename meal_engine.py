@@ -147,15 +147,17 @@ Be realistic about portion sizes.
 Return ONLY valid JSON, no markdown fences:
 {
   "description": "Short food name, under 50 chars",
-  "items": ["item 1", "item 2"],
+  "items": ["item 1 (estimated quantity, e.g. 2 pieces, 1 cup, 200g)", "item 2 (quantity)"],
   "estimated_calories": 450,
   "estimated_protein": 35,
   "estimated_fiber": 5,
   "estimated_carbs": 40,
   "estimated_fat": 18,
   "confidence": "medium",
-  "notes": "Any relevant notes"
-}"""
+  "notes": "Any relevant notes about portion sizes assumed"
+}
+
+IMPORTANT: In the "items" array, always include the estimated quantity/portion for each item (e.g. "Rice (1.5 cups)", "Chicken curry (200g)", "Naan (2 pieces)"). This helps the user verify your assumptions."""
     raw = await _call_claude_vision(image_b64, media_type, prompt)
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     return json.loads(cleaned)

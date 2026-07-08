@@ -39,7 +39,10 @@ All routes are in `server.py`. Auth routes are mounted from `auth.py` functions:
 - `/api/today` — Dashboard data (GET). Returns food log, targets, workout, fridge, chat history for a date
 - `/api/food-log` — CRUD for food entries. PUT supports `re_estimate: true` to re-run Claude estimation
 - `/api/photo/{food,fridge,receipt}` — Vision analysis endpoints. All return analysis without auto-saving
-- `/api/fridge` — CRUD + bulk add. Fridge items are per-user (keyed on `user_id`)
+- `/api/fridge` — CRUD + bulk add. Fridge items are per-user, or shared via fridge groups
+- `/api/fridge/share` — GET share info, POST to generate share code
+- `/api/fridge/join` — Join a shared fridge by code
+- `/api/fridge/leave` — Leave a shared fridge
 - `/api/workout` — CRUD + Apple Health sync at `/api/workout/sync`
 - `/api/vacation` — Toggle vacation mode (excludes day from analysis metrics)
 - `/api/analysis` — Multi-day macro history with deficit calculations
@@ -55,9 +58,9 @@ Production deploys via SCP to a GCP VM named `dietician` in `us-central1-f`, the
 - **User identification**: Google OAuth `sub` claim stored in session as `user_id`. Per-user nutrition targets stored in DB `users` table (calories_min, calories_max, protein_target, fiber_target, timezone).
 - **Timezone handling**: Frontend sends IANA timezone via `X-Timezone` header. Server's `get_client_date(request)` uses it to compute the correct local date. User's timezone is persisted in DB for future use.
 - **Claude API responses**: Expected as raw JSON (no markdown fences). The engine strips fences as a fallback. Three chat response types: `log` (food entry), `suggest` (meal ideas), `chat` (general). The system prompt includes current macro totals and fridge inventory for context.
-- **Photo scan flow**: Backend analyzes but does NOT auto-save. Frontend shows a review modal for editing before confirming. Applies to food photos, fridge photos, and receipt scans.
+- **Photo scan flow**: Backend analyzes but does NOT auto-save. Frontend shows a review modal with editable item quantities (assumed portions) and a Re-estimate button. User can correct portions and re-estimate macros before logging. Applies to food photos, fridge photos, and receipt scans.
 - **DB migrations**: `init_db()` uses try/except around ALTER TABLE statements to add columns idempotently — if the column already exists, the OperationalError is silently caught. New columns must be added this way.
-- **Fridge is per-user**: `fridge_items` table is keyed on `(user_id, name)`. All fridge DB functions take `user_id` as first argument.
+- **Fridge sharing**: `fridge_items` table is keyed on `(user_id, name)`. Users can create a shared fridge group (6-char hex code) — members of the same `fridge_group` share one fridge. `get_fridge_id(user_id)` resolves to the group ID if set, else the user's own ID. All fridge DB functions take this resolved ID as first argument.
 - **Quick log dedup**: `quick_log_history` stores descriptions lowercased, uses UPSERT to increment `times_used` on repeats. Powers the autocomplete suggestions endpoint.
 - **Drink detection**: `db.py` has a `DRINK_KEYWORDS` tuple (~40 terms). `get_drinks_range()` scans food log descriptions for keyword matches to compute drink counts/calories per day for analysis.
 - **Workout resolution chain**: DB entry for today → most recent previous DB entry → config defaults by weekday. Supports manual entry and Apple Health sync via iOS Shortcuts.

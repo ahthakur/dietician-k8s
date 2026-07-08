@@ -670,9 +670,14 @@ else{toast("Could not analyze photo","rgba(239,68,68,0.9)")}
 
 function showFoodReviewModal(a){
 const mc=document.getElementById("modalContainer");
+const itemsHtml=(a.items&&a.items.length)?`<div style="margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,0.04);border-radius:var(--radius-sm);border:1px solid rgba(255,255,255,0.06)">
+<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:rgba(255,255,255,0.3);margin-bottom:6px;font-weight:600">Assumed portions <span style="font-weight:400;text-transform:none;letter-spacing:0">(edit to correct)</span></div>
+<div id="foodItems">${a.items.map(i=>`<input class="food-item-input" value="${i.replace(/"/g,'&quot;')}" style="width:100%;margin-bottom:4px;font-size:13px;padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:rgba(255,255,255,0.7)">`).join('')}</div>
+</div>`:'';
 mc.innerHTML=`<div class="modal-bg"><div class="modal">
 <h3>Review Scanned Meal</h3>
 ${a.notes?`<div style="font-size:12px;color:rgba(255,255,255,0.35);margin-bottom:14px;line-height:1.5">💡 ${a.notes}</div>`:''}
+${itemsHtml}
 <label>Description</label><input id="foodDesc" value="${(a.description||'').replace(/"/g,'&quot;')}">
 <div style="display:flex;gap:8px;margin-top:4px">
 <div style="flex:1"><label>Calories</label><input id="foodCal" type="number" value="${a.estimated_calories||0}"></div>
@@ -680,8 +685,26 @@ ${a.notes?`<div style="font-size:12px;color:rgba(255,255,255,0.35);margin-bottom
 <div style="flex:1"><label>Fiber (g)</label><input id="foodFib" type="number" value="${a.estimated_fiber||0}"></div>
 </div>
 <button class="btn btn-green btn-full" style="margin-top:20px;font-size:16px;padding:14px" onclick="confirmFoodLog()">Log This Meal</button>
+<button class="btn btn-p btn-full" style="margin-top:8px" onclick="reEstimateFood()">Re-estimate</button>
 <button class="btn btn-g btn-full" style="margin-top:8px" onclick="closeModal()">Discard</button>
 </div></div>`}
+
+async function reEstimateFood(){
+const desc=document.getElementById("foodDesc").value.trim();
+if(!desc){toast("Enter a description first","rgba(239,68,68,0.9)");return}
+const itemInputs=document.querySelectorAll("#foodItems .food-item-input");
+let msg=`had ${desc}`;
+if(itemInputs.length){const items=[...itemInputs].map(i=>i.value.trim()).filter(Boolean);if(items.length)msg=`had: ${items.join(', ')}`}
+toast("Re-estimating...","rgba(59,130,246,0.9)");
+try{const r=await api("/api/chat",{method:"POST",body:JSON.stringify({message:msg,date:S.logDate||getLocalDate()})});
+if(r.type==="log"){
+document.getElementById("foodCal").value=r.calories||0;
+document.getElementById("foodProt").value=r.protein||0;
+document.getElementById("foodFib").value=r.fiber||0;
+if(r.description)document.getElementById("foodDesc").value=r.description;
+toast(`Updated: ${r.calories} cal, ${r.protein}g protein`,"rgba(74,222,128,0.9)")}
+else{toast("Could not re-estimate","rgba(239,68,68,0.9)")}}
+catch(e){toast("Re-estimate failed","rgba(239,68,68,0.9)")}}
 
 async function confirmFoodLog(){
 const desc=document.getElementById("foodDesc").value.trim()||"Meal";
