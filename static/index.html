@@ -672,7 +672,7 @@ function showFoodReviewModal(a){
 const mc=document.getElementById("modalContainer");
 const itemsHtml=(a.items&&a.items.length)?`<div style="margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,0.04);border-radius:var(--radius-sm);border:1px solid rgba(255,255,255,0.06)">
 <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:rgba(255,255,255,0.3);margin-bottom:6px;font-weight:600">Assumed portions <span style="font-weight:400;text-transform:none;letter-spacing:0">(edit to correct)</span></div>
-<div id="foodItems">${a.items.map(i=>`<input class="food-item-input" value="${i.replace(/"/g,'&quot;')}" style="width:100%;margin-bottom:4px;font-size:13px;padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:rgba(255,255,255,0.7)">`).join('')}</div>
+<div id="foodItems">${a.items.map(i=>`<div style="display:flex;gap:4px;margin-bottom:4px;align-items:center"><input class="food-item-input" value="${i.replace(/"/g,'&quot;')}" style="flex:1;font-size:13px;padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:rgba(255,255,255,0.7)"><button onclick="this.parentElement.remove()" style="background:none;border:none;color:rgba(239,68,68,0.5);font-size:16px;cursor:pointer;padding:0 4px;flex-shrink:0">×</button></div>`).join('')}</div>
 </div>`:'';
 mc.innerHTML=`<div class="modal-bg"><div class="modal">
 <h3>Review Scanned Meal</h3>
@@ -693,17 +693,15 @@ async function reEstimateFood(){
 const desc=document.getElementById("foodDesc").value.trim();
 if(!desc){toast("Enter a description first","rgba(239,68,68,0.9)");return}
 const itemInputs=document.querySelectorAll("#foodItems .food-item-input");
-let msg=`had ${desc}`;
-if(itemInputs.length){const items=[...itemInputs].map(i=>i.value.trim()).filter(Boolean);if(items.length)msg=`had: ${items.join(', ')}`}
+let msg=desc;
+if(itemInputs.length){const items=[...itemInputs].map(i=>i.value.trim()).filter(Boolean);if(items.length)msg=items.join(', ')}
 toast("Re-estimating...","rgba(59,130,246,0.9)");
-try{const r=await api("/api/chat",{method:"POST",body:JSON.stringify({message:msg,date:S.logDate||getLocalDate()})});
-if(r.type==="log"){
+try{const r=await api("/api/estimate",{method:"POST",body:JSON.stringify({message:msg})});
 document.getElementById("foodCal").value=r.calories||0;
 document.getElementById("foodProt").value=r.protein||0;
 document.getElementById("foodFib").value=r.fiber||0;
 if(r.description)document.getElementById("foodDesc").value=r.description;
 toast(`Updated: ${r.calories} cal, ${r.protein}g protein`,"rgba(74,222,128,0.9)")}
-else{toast("Could not re-estimate","rgba(239,68,68,0.9)")}}
 catch(e){toast("Re-estimate failed","rgba(239,68,68,0.9)")}}
 
 async function confirmFoodLog(){
@@ -857,12 +855,20 @@ const prot=parseInt(document.getElementById("editProt").value)||0;
 const fib=parseInt(document.getElementById("editFib").value)||0;
 const qtyBtn=document.querySelector('#qtyToggle button.active');
 const qty=qtyBtn?parseInt(qtyBtn.dataset.val)||1:1;
-closeModal();
 if(reEst&&desc){toast("Re-estimating...","rgba(59,130,246,0.9)");
-const r=await api(`/api/food-log/${id}`,{method:"PUT",body:JSON.stringify({description:desc,re_estimate:true})});
-toast(`Updated: ${r.calories} cal, ${r.protein}g protein, ${r.fiber}g fiber`,"rgba(74,222,128,0.9)")}
-else{await api(`/api/food-log/${id}`,{method:"PUT",body:JSON.stringify({calories:cal,protein:prot,fiber:fib,description:desc||undefined,quantity:qty})})}
-await loadToday()}
+try{const r=await api("/api/estimate",{method:"POST",body:JSON.stringify({message:desc})});
+document.getElementById("editCal").value=r.calories||0;
+document.getElementById("editProt").value=r.protein||0;
+document.getElementById("editFib").value=r.fiber||0;
+const t=document.getElementById('qtyToggle');
+t.dataset.baseCal=r.calories||0;t.dataset.baseProt=r.protein||0;t.dataset.baseFib=r.fiber||0;
+document.querySelectorAll('#qtyToggle button').forEach(b=>b.classList.remove('active'));
+document.querySelector('#qtyToggle button[data-val="1"]').classList.add('active');
+toast(`Re-estimated: ${r.calories} cal, ${r.protein}g protein`,"rgba(74,222,128,0.9)")}
+catch(e){toast("Re-estimate failed","rgba(239,68,68,0.9)")}}
+else{closeModal();
+await api(`/api/food-log/${id}`,{method:"PUT",body:JSON.stringify({calories:cal,protein:prot,fiber:fib,description:desc||undefined,quantity:qty})});
+await loadToday()}}
 
 function closeModal(){document.getElementById("modalContainer").innerHTML=""}
 

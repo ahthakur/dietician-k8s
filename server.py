@@ -423,6 +423,18 @@ async def edit_food_log(entry_id: int, req: UpdateFoodLogRequest, request: Reque
         return {"status": "updated"}
 
 
+@app.post("/api/estimate")
+async def estimate_macros(req: ChatRequest, request: Request):
+    user_id = require_auth(request)
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    try:
+        result = await process_chat_message(user_id, f"had {req.message}")
+        return {"calories": result.get("calories", 0), "protein": result.get("protein", 0), "fiber": result.get("fiber", 0), "description": result.get("description", req.message)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ── Analysis ─────────────────────────────────────
 
 @app.get("/api/analysis")
