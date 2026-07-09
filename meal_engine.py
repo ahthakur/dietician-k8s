@@ -43,14 +43,14 @@ async def _call_claude(prompt: str, system: str = "", max_tokens: int = 1500) ->
         return data["content"][0]["text"]
 
 
-async def _call_claude_vision(image_b64: str, media_type: str, prompt: str) -> str:
+async def _call_claude_vision(image_b64: str, media_type: str, prompt: str, max_tokens: int = 2000) -> str:
     headers = {
         "Content-Type": "application/json",
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
     }
     body = {
-        "model": MODEL, "max_tokens": 1000,
+        "model": MODEL, "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": [
             {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}},
             {"type": "text", "text": prompt},
@@ -138,6 +138,67 @@ RULES:
         return {"type": "chat", "message": cleaned}
 
 
+async def generate_meal_ideas(user_id: str, meal_type: str = "dinner", servings: int = 2, cuisine: str = "", plan_date: Optional[date] = None) -> list:
+    if plan_date is None:
+        plan_date = date.today()
+
+    user = get_user(user_id)
+    if not user:
+        return []
+
+    totals = get_food_log_totals(str(plan_date), user_id)
+    remaining_cal = user["calories_max"] - totals["calories"]
+    remaining_prot = user["protein_target"] - totals["protein"]
+    remaining_fiber = user["fiber_target"] - totals["fiber"]
+
+    fridge = get_fridge_items(get_fridge_id(user_id))
+    fridge_desc = ", ".join([f"{f['name']}" + (f" ({f['quantity']})" if f.get('quantity') else "") for f in fridge]) if fridge else "empty"
+
+    cuisine_line = f"CUISINE: {cuisine}" if cuisine and cuisine.lower() != "surprise me" else f"CUISINE: {CUISINE_PREFERENCE} (but variety is welcome)"
+
+    prompt = f"""Generate exactly 3 {meal_type} recipe ideas for {servings} {'person' if servings == 1 else 'people'}.
+
+REMAINING MACROS TODAY: ~{remaining_cal} cal, ~{remaining_prot}g protein, ~{remaining_fiber}g fiber
+{cuisine_line}
+FRIDGE INVENTORY (strongly prefer these ingredients): {fridge_desc}
+
+Each recipe should be practical (under 30 min), use fridge ingredients when possible, and include clear step-by-step cooking instructions.
+
+Return ONLY valid JSON array, no markdown fences:
+[
+  {{
+    "name": "Recipe Name",
+    "cook_time_min": 20,
+    "calories": 450,
+    "protein": 35,
+    "fiber": 8,
+    "ingredients": ["400g chicken breast", "1 cup rice", "2 tbsp soy sauce"],
+    "fridge_ingredients": ["chicken breast", "rice"],
+    "steps": [
+      {{"text": "Cut chicken into bite-sized pieces and season with salt and pepper", "timer_seconds": 0}},
+      {{"text": "Heat oil in a pan over medium-high heat and cook chicken for 6 minutes until golden", "timer_seconds": 360}},
+      {{"text": "Add sauce and simmer for 3 minutes", "timer_seconds": 180}}
+    ]
+  }}
+]
+
+RULES:
+- Each step must have "text" (clear instruction) and "timer_seconds" (0 if no wait, otherwise the seconds for that step)
+- Only set timer_seconds > 0 for steps that involve waiting (cooking, simmering, boiling, baking, resting, marinating)
+- Prep steps like chopping, mixing, seasoning should have timer_seconds: 0
+- Keep step text concise but complete
+- Scale ingredient quantities for {servings} {'person' if servings == 1 else 'people'}
+- "fridge_ingredients" lists which ingredients come from the fridge inventory above (use the fridge item names)
+- Macros are per serving (per person)"""
+
+    raw = await _call_claude(prompt, max_tokens=3000)
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return []
+
+
 async def analyze_food_photo(image_b64: str, media_type: str) -> dict:
     """Analyze a photo of food to estimate calories, protein, and fiber."""
     prompt = """Look at this food photo and estimate the nutritional content.
@@ -206,7 +267,7 @@ Return ONLY valid JSON, no markdown fences:
   "total": "45.67",
   "date": "2026-04-22"
 }"""
-    raw = await _call_claude_vision(image_b64, media_type, prompt)
+    raw = await _call_claude_vision(image_b64, media_type, prompt, max_tokens=4000)
     cleaned = raw.replace("```json", "").replace("```", "").strip()
     return json.loads(cleaned)
 

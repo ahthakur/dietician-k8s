@@ -26,6 +26,7 @@ from db import get_user, update_user_targets, update_user_timezone
 from db import (get_workout, get_latest_workout, set_workout, delete_workout,
     get_workouts_range, get_drinks_range, set_vacation, unset_vacation,
     is_vacation, get_vacation_range)
+from db import log_weight, get_weight, get_weight_range, get_latest_weight, delete_weight
 from db import (
     init_db, get_fridge_items, add_fridge_item, add_fridge_items_bulk,
     remove_fridge_item, remove_fridge_item_by_id, clear_fridge,
@@ -34,12 +35,12 @@ from db import (
     add_food_log_entry, get_food_log, delete_food_log_entry,
     update_food_log_entry, get_food_log_totals, get_food_log_history,
     check_food_log_for_keyword,
-    ack_reminder, save_grocery_list, get_grocery_list,
+    ack_reminder,
     save_quick_log, get_frequent_quick_logs, search_quick_logs,
     log_purchases_bulk, get_purchase_frequency,
     save_chat_message, get_chat_history,
 )
-from meal_engine import process_chat_message, analyze_food_photo, analyze_fridge_photo, analyze_receipt_photo, generate_grocery_list
+from meal_engine import process_chat_message, analyze_food_photo, analyze_fridge_photo, analyze_receipt_photo, generate_meal_ideas
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("dietician.server")
@@ -127,6 +128,8 @@ class UpdateProfileRequest(BaseModel):
     calories_max: int
     protein_target: int
     fiber_target: int
+    weight_target: Optional[float] = None
+    current_weight: Optional[float] = None
 
 class WorkoutRequest(BaseModel):
     time: str = ""
@@ -140,6 +143,15 @@ class AppleHealthSyncRequest(BaseModel):
     workouts: list = []
     active_calories: float = 0
     total_duration_min: float = 0
+
+class WeightRequest(BaseModel):
+    date: Optional[str] = None
+    weight: float
+
+class MealIdeasRequest(BaseModel):
+    meal_type: str = "dinner"
+    servings: int = 2
+    cuisine: str = ""
 
 
 # ── Helper: get user targets ────────────────────
@@ -166,8 +178,37 @@ def get_user_targets(user_id: str):
 @app.put("/api/profile")
 async def update_profile(req: UpdateProfileRequest, request: Request):
     user_id = require_auth(request)
-    update_user_targets(user_id, req.calories_max, req.protein_target, req.fiber_target)
+    update_user_targets(user_id, req.calories_max, req.protein_target, req.fiber_target, req.weight_target)
+    if req.current_weight:
+        today = get_client_date(request)
+        log_weight(user_id, today, req.current_weight)
     return {"status": "updated"}
+
+
+# ── Weight Tracking ─────────────────────────────
+
+@app.post("/api/weight")
+async def post_weight(req: WeightRequest, request: Request):
+    user_id = require_auth(request)
+    log_date = req.date or get_client_date(request)
+    log_weight(user_id, log_date, req.weight)
+    return {"status": "logged", "date": log_date, "weight": req.weight}
+
+@app.get("/api/weight")
+async def get_weight_history(request: Request, days: int = 30):
+    user_id = require_auth(request)
+    ref = get_client_date(request)
+    from datetime import timedelta as td
+    start = str(date.fromisoformat(ref) - td(days=days))
+    entries = get_weight_range(user_id, start, ref)
+    latest = get_latest_weight(user_id)
+    return {"entries": entries, "latest": latest}
+
+@app.delete("/api/weight/{log_date}")
+async def remove_weight(log_date: str, request: Request):
+    user_id = require_auth(request)
+    delete_weight(user_id, log_date)
+    return {"status": "deleted"}
 
 
 # ── Chat Endpoint (main interface) ───────────────
@@ -261,6 +302,8 @@ async def get_today(request: Request, client_date: Optional[str] = None):
             update_user_timezone(user_id, tz_name)
 
     vacation = is_vacation(user_id, today)
+    today_weight = get_weight(user_id, today)
+    latest_weight = get_latest_weight(user_id)
 
     return {
         "date": today,
@@ -278,6 +321,8 @@ async def get_today(request: Request, client_date: Optional[str] = None):
             "protein": targets["protein_target"],
             "fiber": targets["fiber_target"],
         },
+        "weight": today_weight,
+        "latest_weight": latest_weight,
     }
 
 
@@ -469,6 +514,9 @@ async def get_analysis(request: Request, days: int = 7):
     # Filter out vacation days for metrics
     active_history = [d for d in history if not d["is_vacation"]]
 
+    # Weight data for the period
+    weight_data = get_weight_range(user_id, start, end)
+
     return {
         "user_id": user_id,
         "days": days,
@@ -479,6 +527,7 @@ async def get_analysis(request: Request, days: int = 7):
             "protein": targets["protein_target"],
             "fiber": targets["fiber_target"],
         },
+        "weight": weight_data,
     }
 
 
@@ -631,26 +680,20 @@ async def leave_fridge_share(request: Request):
     return {"status": "left"}
 
 
-# ── Grocery ──────────────────────────────────────
+# ── Meal Ideas ────────────────────────────────────
 
-@app.post("/api/grocery/generate")
-async def generate_grocery_endpoint(request: Request):
+@app.post("/api/meals/suggest")
+async def suggest_meals(req: MealIdeasRequest, request: Request):
     user_id = require_auth(request)
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
     try:
-        grocery = await generate_grocery_list(user_id)
-        save_grocery_list(get_client_date(request), grocery)
-        return {"status": "generated", "grocery": grocery}
+        log_date = get_client_date(request)
+        recipes = await generate_meal_ideas(user_id, req.meal_type, req.servings, req.cuisine, plan_date=date.fromisoformat(log_date))
+        return {"recipes": recipes}
     except Exception as e:
+        logger.error(f"Meal ideas failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/grocery")
-async def get_grocery(request: Request, week_start: Optional[str] = None):
-    require_auth(request)
-    ws = week_start or get_client_date(request)
-    grocery = get_grocery_list(ws)
-    return {"status": "ok" if grocery else "not_found", "grocery": grocery}
 
 
 # ── Quick Log Suggestions ───────────────────────

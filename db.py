@@ -130,6 +130,15 @@ def init_db():
             UNIQUE(user_id, log_date)
         );
 
+        CREATE TABLE IF NOT EXISTS weight_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            log_date TEXT NOT NULL,
+            weight REAL NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, log_date)
+        );
+
         CREATE TABLE IF NOT EXISTS users (
             google_id TEXT PRIMARY KEY,
             email TEXT NOT NULL,
@@ -156,6 +165,7 @@ def init_db():
         "ALTER TABLE workout_log ADD COLUMN source TEXT DEFAULT 'manual'",
         "ALTER TABLE food_log ADD COLUMN quantity INTEGER DEFAULT 1",
         "ALTER TABLE users ADD COLUMN fridge_group TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN weight_target REAL DEFAULT 0",
     ]:
         try:
             conn.execute(col_sql)
@@ -547,12 +557,18 @@ def get_user(google_id):
         return None
     return dict(row)
 
-def update_user_targets(google_id, calories_max, protein_target, fiber_target):
+def update_user_targets(google_id, calories_max, protein_target, fiber_target, weight_target=None):
     conn = get_conn()
-    conn.execute(
-        "UPDATE users SET calories_max = ?, protein_target = ?, fiber_target = ?, updated_at = datetime('now') WHERE google_id = ?",
-        (calories_max, protein_target, fiber_target, google_id),
-    )
+    if weight_target is not None:
+        conn.execute(
+            "UPDATE users SET calories_max = ?, protein_target = ?, fiber_target = ?, weight_target = ?, updated_at = datetime('now') WHERE google_id = ?",
+            (calories_max, protein_target, fiber_target, weight_target, google_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE users SET calories_max = ?, protein_target = ?, fiber_target = ?, updated_at = datetime('now') WHERE google_id = ?",
+            (calories_max, protein_target, fiber_target, google_id),
+        )
     conn.commit()
     conn.close()
 
@@ -636,3 +652,49 @@ def get_vacation_range(user_id, start_date, end_date):
     ).fetchall()
     conn.close()
     return {r["log_date"] for r in rows}
+
+
+# ── Weight Tracking ────────────────────────────────
+
+def log_weight(user_id, log_date, weight):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO weight_log (user_id, log_date, weight) VALUES (?, ?, ?) "
+        "ON CONFLICT(user_id, log_date) DO UPDATE SET weight = excluded.weight",
+        (user_id, log_date, weight),
+    )
+    conn.commit()
+    conn.close()
+
+def get_weight(user_id, log_date):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT weight FROM weight_log WHERE user_id = ? AND log_date = ?",
+        (user_id, log_date),
+    ).fetchone()
+    conn.close()
+    return row["weight"] if row else None
+
+def get_weight_range(user_id, start_date, end_date):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT log_date, weight FROM weight_log WHERE user_id = ? AND log_date >= ? AND log_date <= ? ORDER BY log_date",
+        (user_id, start_date, end_date),
+    ).fetchall()
+    conn.close()
+    return [{"log_date": r["log_date"], "weight": r["weight"]} for r in rows]
+
+def get_latest_weight(user_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT log_date, weight FROM weight_log WHERE user_id = ? ORDER BY log_date DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return {"log_date": row["log_date"], "weight": row["weight"]} if row else None
+
+def delete_weight(user_id, log_date):
+    conn = get_conn()
+    conn.execute("DELETE FROM weight_log WHERE user_id = ? AND log_date = ?", (user_id, log_date))
+    conn.commit()
+    conn.close()

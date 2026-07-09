@@ -61,6 +61,7 @@ async def me(request: Request):
             "calories_max": user["calories_max"],
             "protein_target": user["protein_target"],
             "fiber_target": user["fiber_target"],
+            "weight_target": user.get("weight_target", 0),
         },
     })
 
