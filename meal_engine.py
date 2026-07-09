@@ -199,6 +199,50 @@ RULES:
         return []
 
 
+async def generate_custom_recipe(user_id: str, query: str, servings: int = 2) -> list:
+    user = get_user(user_id)
+    fridge = get_fridge_items(get_fridge_id(user_id)) if user else []
+    fridge_desc = ", ".join([f"{f['name']}" + (f" ({f['quantity']})" if f.get('quantity') else "") for f in fridge]) if fridge else "empty"
+
+    prompt = f"""Generate a detailed recipe for: {query}
+Scaled for {servings} {'person' if servings == 1 else 'people'}.
+
+FRIDGE INVENTORY (note which ingredients are available): {fridge_desc}
+
+Return ONLY valid JSON array with exactly 1 recipe, no markdown fences:
+[
+  {{
+    "name": "Recipe Name",
+    "cook_time_min": 20,
+    "calories": 450,
+    "protein": 35,
+    "fiber": 8,
+    "ingredients": ["400g chicken breast", "1 cup rice"],
+    "fridge_ingredients": ["chicken breast", "rice"],
+    "steps": [
+      {{"text": "Step instruction here", "timer_seconds": 0}},
+      {{"text": "Cook for 5 minutes", "timer_seconds": 300}}
+    ]
+  }}
+]
+
+RULES:
+- Each step must have "text" and "timer_seconds" (0 if no wait, otherwise seconds)
+- Only set timer_seconds > 0 for steps involving waiting (cooking, boiling, steeping, simmering)
+- Keep step text concise but complete
+- Scale quantities for {servings} {'person' if servings == 1 else 'people'}
+- "fridge_ingredients" lists which ingredients match the fridge inventory
+- Macros are per serving
+- If the request is for a drink (tea, chai, coffee, smoothie, etc.), still provide full steps and reasonable macros"""
+
+    raw = await _call_claude(prompt, max_tokens=2000)
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return []
+
+
 async def analyze_food_photo(image_b64: str, media_type: str) -> dict:
     """Analyze a photo of food to estimate calories, protein, and fiber."""
     prompt = """Look at this food photo and estimate the nutritional content.

@@ -40,7 +40,7 @@ from db import (
     log_purchases_bulk, get_purchase_frequency,
     save_chat_message, get_chat_history,
 )
-from meal_engine import process_chat_message, analyze_food_photo, analyze_fridge_photo, analyze_receipt_photo, generate_meal_ideas
+from meal_engine import process_chat_message, analyze_food_photo, analyze_fridge_photo, analyze_receipt_photo, generate_meal_ideas, generate_custom_recipe
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("dietician.server")
@@ -152,6 +152,7 @@ class MealIdeasRequest(BaseModel):
     meal_type: str = "dinner"
     servings: int = 2
     cuisine: str = ""
+    query: Optional[str] = None
 
 
 # ── Helper: get user targets ────────────────────
@@ -689,7 +690,10 @@ async def suggest_meals(req: MealIdeasRequest, request: Request):
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
     try:
         log_date = get_client_date(request)
-        recipes = await generate_meal_ideas(user_id, req.meal_type, req.servings, req.cuisine, plan_date=date.fromisoformat(log_date))
+        if req.query:
+            recipes = await generate_custom_recipe(user_id, req.query, req.servings)
+        else:
+            recipes = await generate_meal_ideas(user_id, req.meal_type, req.servings, req.cuisine, plan_date=date.fromisoformat(log_date))
         return {"recipes": recipes}
     except Exception as e:
         logger.error(f"Meal ideas failed: {e}")
