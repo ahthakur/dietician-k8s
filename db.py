@@ -495,7 +495,7 @@ def set_workout(user_id, log_date, time="", duration_min=45, label="", calories_
 DRINK_KEYWORDS = ('beer', 'wine', 'cocktail', 'whiskey', 'whisky', 'vodka', 'rum', 'gin', 'tequila',
     'margarita', 'martini', 'bourbon', 'scotch', 'sake', 'champagne', 'prosecco', 'seltzer',
     'hard cider', 'mead', 'sangria', 'mojito', 'daiquiri', 'negroni', 'old fashioned',
-    'manhattan', 'cosmopolitan', 'pina colada', 'alcohol', 'drink', 'shot', 'brew', 'ale',
+    'manhattan', 'cosmopolitan', 'pina colada', 'alcohol', 'ale',
     'lager', 'stout', 'ipa', 'pilsner', 'malt', 'cider', 'brandy', 'cognac', 'aperol')
 
 def get_drinks_range(user_id, start_date, end_date):
