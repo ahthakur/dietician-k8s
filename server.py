@@ -722,7 +722,7 @@ if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
     @app.get("/")
     async def serve_frontend():
-        return FileResponse(os.path.join(static_dir, "index.html"))
+        return FileResponse(os.path.join(static_dir, "index.html"), headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
 if __name__ == "__main__":
