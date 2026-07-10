@@ -166,6 +166,7 @@ def init_db():
         "ALTER TABLE food_log ADD COLUMN quantity INTEGER DEFAULT 1",
         "ALTER TABLE users ADD COLUMN fridge_group TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN weight_target REAL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN tdee INTEGER DEFAULT 0",
     ]:
         try:
             conn.execute(col_sql)
@@ -557,17 +558,17 @@ def get_user(google_id):
         return None
     return dict(row)
 
-def update_user_targets(google_id, calories_max, protein_target, fiber_target, weight_target=None):
+def update_user_targets(google_id, calories_max, protein_target, fiber_target, weight_target=None, tdee=None):
     conn = get_conn()
     if weight_target is not None:
         conn.execute(
-            "UPDATE users SET calories_max = ?, protein_target = ?, fiber_target = ?, weight_target = ?, updated_at = datetime('now') WHERE google_id = ?",
-            (calories_max, protein_target, fiber_target, weight_target, google_id),
+            "UPDATE users SET calories_max = ?, protein_target = ?, fiber_target = ?, weight_target = ?, tdee = ?, updated_at = datetime('now') WHERE google_id = ?",
+            (calories_max, protein_target, fiber_target, weight_target, tdee or 0, google_id),
         )
     else:
         conn.execute(
-            "UPDATE users SET calories_max = ?, protein_target = ?, fiber_target = ?, updated_at = datetime('now') WHERE google_id = ?",
-            (calories_max, protein_target, fiber_target, google_id),
+            "UPDATE users SET calories_max = ?, protein_target = ?, fiber_target = ?, tdee = ?, updated_at = datetime('now') WHERE google_id = ?",
+            (calories_max, protein_target, fiber_target, tdee or 0, google_id),
         )
     conn.commit()
     conn.close()

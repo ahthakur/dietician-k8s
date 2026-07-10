@@ -62,6 +62,7 @@ async def me(request: Request):
             "protein_target": user["protein_target"],
             "fiber_target": user["fiber_target"],
             "weight_target": user.get("weight_target", 0),
+            "tdee": user.get("tdee", 0) or 0,
         },
     })
 

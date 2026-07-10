@@ -325,6 +325,7 @@ ${currentUser.picture?`<img src="${currentUser.picture}" style="width:48px;heigh
 <div><div style="font-weight:600;font-size:16px">${currentUser.name}</div><div style="font-size:13px;color:rgba(255,255,255,0.4)">${currentUser.email}</div></div>
 </div>
 <label>Daily Calories</label><input id="profCal" type="number" value="${currentUser.calories_max}">
+<label>TDEE <span style="font-weight:400;color:rgba(255,255,255,0.3)">(for deficit tracking)</span></label><input id="profTdee" type="number" value="${currentUser.tdee||currentUser.calories_max}" placeholder="Same as daily calories if unsure">
 <label>Protein Target (g)</label><input id="profProt" type="number" value="${currentUser.protein_target}">
 <label>Fiber Target (g)</label><input id="profFib" type="number" value="${currentUser.fiber_target}">
 <div style="border-top:1px solid rgba(255,255,255,0.06);margin-top:16px;padding-top:12px">
@@ -340,12 +341,13 @@ ${currentUser.picture?`<img src="${currentUser.picture}" style="width:48px;heigh
 
 async function saveProfile(){
 const cal=parseInt(document.getElementById("profCal").value)||2000;
+const tdee=parseInt(document.getElementById("profTdee").value)||cal;
 const prot=parseInt(document.getElementById("profProt").value)||150;
 const fib=parseInt(document.getElementById("profFib").value)||30;
 const wt=parseFloat(document.getElementById("profWeight").value)||null;
 const wtTarget=parseFloat(document.getElementById("profWeightTarget").value)||null;
-try{await api("/api/profile",{method:"PUT",body:JSON.stringify({calories_max:cal,protein_target:prot,fiber_target:fib,weight_target:wtTarget,current_weight:wt})});
-currentUser.calories_max=cal;currentUser.protein_target=prot;currentUser.fiber_target=fib;currentUser.weight_target=wtTarget;
+try{await api("/api/profile",{method:"PUT",body:JSON.stringify({calories_max:cal,protein_target:prot,fiber_target:fib,weight_target:wtTarget,current_weight:wt,tdee:tdee})});
+currentUser.calories_max=cal;currentUser.protein_target=prot;currentUser.fiber_target=fib;currentUser.weight_target=wtTarget;currentUser.tdee=tdee;
 closeModal();toast("Saved","rgba(74,222,128,0.9)");await loadToday()}catch(e){toast("Failed to save","rgba(239,68,68,0.9)")}}
 
 function setTab(t){S.tab=t;const tabs=["home","analysis","fridge","meals"];
@@ -532,7 +534,7 @@ svg+=`<text x="${PL-4}" y="${zeroY+3}" fill="rgba(255,255,255,0.35)" font-size="
 const points=data.map((d,i)=>{
 const x=PL+(i/Math.max(data.length-1,1))*chartW;
 const deficit=d.deficit||0;
-const y=zeroY-(deficit/maxAbs)*(chartH/2);
+const y=zeroY+(deficit/maxAbs)*(chartH/2);
 return{x,y,val:deficit,date:d.log_date}});
 if(points.length>1){let areaPath=`M ${points[0].x} ${points[0].y}`;points.slice(1).forEach(p=>{areaPath+=` L ${p.x} ${p.y}`});areaPath+=` L ${points[points.length-1].x} ${zeroY} L ${points[0].x} ${zeroY} Z`;svg+=`<path d="${areaPath}" fill="#4ADE80" opacity="0.08"/>`}
 if(points.length>1){let linePath=`M ${points[0].x} ${points[0].y}`;points.slice(1).forEach(p=>{linePath+=` L ${p.x} ${p.y}`});svg+=`<path d="${linePath}" fill="none" stroke="#4ADE80" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`}
@@ -604,18 +606,31 @@ const totalDrinks=data.reduce((s,d)=>s+(d.drinks||0),0);
 const totalDrinkCal=active.reduce((s,d)=>s+(d.drink_calories||0),0);
 if(totalDrinks>0){
 const drinkDays=active.filter(d=>d.drinks>0).length;
-const avgDrinksPerDrinkDay=(totalDrinks/(drinkDays||1)).toFixed(1);
 const totalActiveCal=active.reduce((s,d)=>s+d.total_cal,0);
 const pctCal=totalActiveCal?Math.round(totalDrinkCal/totalActiveCal*100):0;
-h+=`<div class="avg-card">
-<div class="avg-title" style="color:#FB923C">🍺 Drinks Summary</div>
-<div class="avg-row">
-<div class="avg-item"><span style="color:#FB923C">${totalDrinks}</span><span> drinks</span></div>
-<div class="avg-item"><span style="color:#FB923C">${totalDrinkCal}</span><span> cal from drinks</span></div>
-<div class="avg-item"><span style="color:#FB923C">${pctCal}%</span><span> of total cal</span></div>
-</div>
-<div style="text-align:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,0.5)">${drinkDays} of ${active.length} days · ~${avgDrinksPerDrinkDay} drinks on those days</div>
-</div>`}
+const W=460,H=180,PL=40,PR=10,PT=20,PB=30;
+const chartW=W-PL-PR,chartH=H-PT-PB;
+const maxDrinks=Math.max(...data.map(d=>d.drinks||0),1);
+let dsvg=`<div class="chart-container"><div class="chart-title">DRINKS</div>`;
+dsvg+=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">`;
+for(let i=0;i<=4;i++){const y=PT+(chartH/4)*i;dsvg+=`<line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="rgba(255,255,255,0.04)"/>`}
+const barW=Math.min(chartW/data.length*0.6,24);
+const gap=chartW/data.length;
+data.forEach((d,i)=>{
+const count=d.drinks||0;
+const barH=count>0?(count/maxDrinks)*chartH:0;
+const x=PL+i*gap+gap/2-barW/2;
+const y=PT+chartH-barH;
+const color=count===0?'rgba(255,255,255,0.06)':count<=2?'#FB923C':'#EF4444';
+if(count===0){dsvg+=`<rect x="${x}" y="${PT+chartH-2}" width="${barW}" rx="3" ry="3" height="2" fill="${color}"/>`}
+else{dsvg+=`<rect x="${x}" y="${y}" width="${barW}" rx="3" ry="3" height="${barH}" fill="${color}" opacity="0.7"/>`;
+dsvg+=`<text x="${x+barW/2}" y="${y-5}" fill="${color}" font-size="9" text-anchor="middle" font-weight="600">${count}</text>`}
+const dayLabel=new Date(d.log_date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
+dsvg+=`<text x="${x+barW/2}" y="${H-6}" fill="rgba(255,255,255,0.3)" font-size="9" text-anchor="middle">${dayLabel}</text>`});
+dsvg+=`</svg>`;
+dsvg+=`<div style="text-align:center;margin-top:8px;font-size:12px;color:rgba(255,255,255,0.5)">${totalDrinks} drinks over ${drinkDays} day${drinkDays>1?'s':''} · ${totalDrinkCal} cal (${pctCal}% of total)</div>`;
+dsvg+=`</div>`;
+h+=dsvg}
 
 return h}
 

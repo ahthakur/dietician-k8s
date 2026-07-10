@@ -130,6 +130,7 @@ class UpdateProfileRequest(BaseModel):
     fiber_target: int
     weight_target: Optional[float] = None
     current_weight: Optional[float] = None
+    tdee: Optional[int] = None
 
 class WorkoutRequest(BaseModel):
     time: str = ""
@@ -160,17 +161,20 @@ class MealIdeasRequest(BaseModel):
 def get_user_targets(user_id: str):
     user = get_user(user_id)
     if user:
+        tdee = user.get("tdee", 0) or 0
         return {
             "calories_min": user["calories_min"],
             "calories_max": user["calories_max"],
             "protein_target": user["protein_target"],
             "fiber_target": user["fiber_target"],
+            "tdee": tdee if tdee > 0 else user["calories_max"],
         }
     return {
         "calories_min": 1800,
         "calories_max": 2000,
         "protein_target": 150,
         "fiber_target": 30,
+        "tdee": 2000,
     }
 
 
@@ -179,7 +183,7 @@ def get_user_targets(user_id: str):
 @app.put("/api/profile")
 async def update_profile(req: UpdateProfileRequest, request: Request):
     user_id = require_auth(request)
-    update_user_targets(user_id, req.calories_max, req.protein_target, req.fiber_target, req.weight_target)
+    update_user_targets(user_id, req.calories_max, req.protein_target, req.fiber_target, req.weight_target, req.tdee)
     if req.current_weight:
         today = get_client_date(request)
         log_weight(user_id, today, req.current_weight)
@@ -501,7 +505,7 @@ async def get_analysis(request: Request, days: int = 7):
     vacation_set = get_vacation_range(user_id, start, end)
 
     # Add deficit and drink data to each day, mark vacations
-    base_cal = targets["calories_max"]
+    base_cal = targets["tdee"]
     for day in history:
         day["is_vacation"] = day["log_date"] in vacation_set
         wk_cal = workout_map.get(day["log_date"], 0)
