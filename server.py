@@ -359,8 +359,8 @@ async def update_workout(req: WorkoutRequest, request: Request, log_date: Option
 async def remove_workout(request: Request, log_date: Optional[str] = None):
     user_id = require_auth(request)
     d = log_date or get_client_date(request)
-    delete_workout(user_id, d)
-    return {"status": "deleted"}
+    set_workout(user_id, d, time="", duration_min=0, label="Rest Day", calories_burned=0, source="manual")
+    return {"status": "rest_day"}
 
 @app.post("/api/workout/sync")
 async def sync_apple_health(request: Request, token: Optional[str] = None, user_email: Optional[str] = None):

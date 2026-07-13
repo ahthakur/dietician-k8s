@@ -393,7 +393,7 @@ const srcIcon=S.today.workout?.source==='apple_health'?' 🍎':'';
 if(S.today.is_vacation){
 h+=`<div class="workout-bar" style="background:rgba(251,191,36,0.1);border-color:rgba(251,191,36,0.2);cursor:pointer" onclick="toggleVacation()">🏖️ Vacation Day — tracking paused<span style="float:right;opacity:0.4">✕</span></div>`}
 else{
-if(S.today.workout){h+=`<div class="workout-bar wb-active" onclick="showWorkoutModal()" style="cursor:pointer">🔥 ${S.today.workout.label}${S.today.workout.calories_burned?` · ${S.today.workout.calories_burned} cal burned${srcIcon}`:''}${S.today.is_social?' · 🍷 Social evening':''}<span style="float:right;opacity:0.4">✏️</span></div>`}
+if(S.today.workout&&S.today.workout.label!=='Rest Day'&&S.today.workout.duration_min>0){h+=`<div class="workout-bar wb-active" onclick="showWorkoutModal()" style="cursor:pointer">🔥 ${S.today.workout.label}${S.today.workout.calories_burned?` · ${S.today.workout.calories_burned} cal burned${srcIcon}`:''}${S.today.is_social?' · 🍷 Social evening':''}<span style="float:right;opacity:0.4">✏️</span></div>`}
 else{h+=`<div class="workout-bar wb-rest" onclick="showWorkoutModal()" style="cursor:pointer">🧘 Rest Day<span style="float:right;opacity:0.4">✏️</span></div>`}
 }
 
@@ -538,7 +538,7 @@ const y=zeroY+(deficit/maxAbs)*(chartH/2);
 return{x,y,val:deficit,date:d.log_date}});
 if(points.length>1){let areaPath=`M ${points[0].x} ${points[0].y}`;points.slice(1).forEach(p=>{areaPath+=` L ${p.x} ${p.y}`});areaPath+=` L ${points[points.length-1].x} ${zeroY} L ${points[0].x} ${zeroY} Z`;svg+=`<path d="${areaPath}" fill="#4ADE80" opacity="0.08"/>`}
 if(points.length>1){let linePath=`M ${points[0].x} ${points[0].y}`;points.slice(1).forEach(p=>{linePath+=` L ${p.x} ${p.y}`});svg+=`<path d="${linePath}" fill="none" stroke="#4ADE80" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`}
-points.forEach(p=>{const color=p.val<=0?'#4ADE80':'#EF4444';svg+=`<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color}" stroke="#0A0A0F" stroke-width="2"/>`;svg+=`<text x="${p.x}" y="${p.y-10}" fill="${color}" font-size="9" text-anchor="middle">${p.val>0?'+':''}${p.val}</text>`;const dayLabel=new Date(p.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});svg+=`<text x="${p.x}" y="${H-6}" fill="rgba(255,255,255,0.3)" font-size="9" text-anchor="middle">${dayLabel}</text>`});
+points.forEach(p=>{const color=p.val<=0?'#4ADE80':'#EF4444';svg+=`<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color}" stroke="#0A0A0F" stroke-width="2"/>`;const label=p.val<=0?`-${Math.abs(p.val)}`:`+${p.val}`;svg+=`<text x="${p.x}" y="${p.y-10}" fill="${color}" font-size="9" text-anchor="middle">${label}</text>`;const dayLabel=new Date(p.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});svg+=`<text x="${p.x}" y="${H-6}" fill="rgba(255,255,255,0.3)" font-size="9" text-anchor="middle">${dayLabel}</text>`});
 svg+=`</svg></div>`;
 h+=svg}
 
@@ -592,14 +592,16 @@ h+=`<div class="avg-card">
 if(hasDeficit){
 const defColor=totalDeficit<=0?'#4ADE80':'#EF4444';
 const lbsLost=(Math.abs(totalDeficit)/3500).toFixed(1);
+const absTotalDeficit=Math.abs(totalDeficit);
+const absAvgDeficit=Math.abs(avgDeficit);
 h+=`<div class="avg-card">
 <div class="avg-title">Deficit Summary</div>
 <div class="avg-row">
-<div class="avg-item"><span style="color:${defColor}">${avgDeficit>0?'+':''}${avgDeficit}</span><span> cal/day avg</span></div>
-<div class="avg-item"><span style="color:${defColor}">${totalDeficit>0?'+':''}${totalDeficit}</span><span> total</span></div>
+<div class="avg-item"><span style="color:${defColor}">${absAvgDeficit}</span><span> cal/day ${totalDeficit<=0?'deficit':'surplus'}</span></div>
+<div class="avg-item"><span style="color:${defColor}">${absTotalDeficit}</span><span> cal total</span></div>
 <div class="avg-item"><span style="color:#4ADE80">${totalWkCal}</span><span> workout cal</span></div>
 </div>
-<div style="text-align:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,0.5)">${totalDeficit<=0?`On track: ~${lbsLost} lbs deficit (3500 cal = 1 lb)`:`Over target by ${totalDeficit} cal`}</div>
+<div style="text-align:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,0.5)">${totalDeficit<=0?`On track: ~${lbsLost} lbs loss (3500 cal = 1 lb)`:`Over TDEE by ${absTotalDeficit} cal (~${lbsLost} lbs gain)`}</div>
 </div>`}
 
 const totalDrinks=data.reduce((s,d)=>s+(d.drinks||0),0);
