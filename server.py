@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 
+import tools
 from config import HOST, PORT, ANTHROPIC_API_KEY, WORKOUTS, SOCIAL_DAYS, SESSION_SECRET, SYNC_TOKEN
 from auth import login as auth_login, callback as auth_callback, me as auth_me, logout as auth_logout, require_auth
 from db import get_user, update_user_targets, update_user_timezone
@@ -158,24 +159,7 @@ class MealIdeasRequest(BaseModel):
 
 # ── Helper: get user targets ────────────────────
 
-def get_user_targets(user_id: str):
-    user = get_user(user_id)
-    if user:
-        tdee = user.get("tdee", 0) or 0
-        return {
-            "calories_min": user["calories_min"],
-            "calories_max": user["calories_max"],
-            "protein_target": user["protein_target"],
-            "fiber_target": user["fiber_target"],
-            "tdee": tdee if tdee > 0 else user["calories_max"],
-        }
-    return {
-        "calories_min": 1800,
-        "calories_max": 2000,
-        "protein_target": 150,
-        "fiber_target": 30,
-        "tdee": 2000,
-    }
+get_user_targets = tools.get_user_targets
 
 
 # ── Profile ──────────────────────────────────────
@@ -273,31 +257,6 @@ async def health():
 async def get_today(request: Request, client_date: Optional[str] = None):
     user_id = require_auth(request)
     today = client_date or get_client_date(request)
-    dow = date.fromisoformat(today).weekday()
-    is_social = dow in SOCIAL_DAYS
-    totals = get_food_log_totals(today, user_id)
-    entries = get_food_log(today, user_id)
-    targets = get_user_targets(user_id)
-
-    # Resolve workout: DB entry > yesterday's DB entry > config default
-    workout = get_workout(user_id, today)
-    if workout:
-        workout = {"time": workout["time"], "duration_min": workout["duration_min"],
-                   "label": workout["label"], "calories_burned": workout["calories_burned"],
-                   "source": workout["source"]}
-    else:
-        prev = get_latest_workout(user_id, today)
-        if prev:
-            workout = {"time": prev["time"], "duration_min": prev["duration_min"],
-                       "label": prev["label"], "calories_burned": 0,
-                       "source": prev["source"], "inherited": True}
-        else:
-            config_w = WORKOUTS.get(dow)
-            if config_w:
-                workout = {**config_w, "calories_burned": 0, "source": "default", "inherited": True}
-
-    workout_cal = workout["calories_burned"] if workout else 0
-    adjusted_calories = targets["calories_max"] + workout_cal
 
     # Update stored timezone if sent
     tz_name = request.headers.get("X-Timezone")
@@ -306,29 +265,7 @@ async def get_today(request: Request, client_date: Optional[str] = None):
         if user and user.get("timezone") != tz_name:
             update_user_timezone(user_id, tz_name)
 
-    vacation = is_vacation(user_id, today)
-    today_weight = get_weight(user_id, today)
-    latest_weight = get_latest_weight(user_id)
-
-    return {
-        "date": today,
-        "day_name": date.fromisoformat(today).strftime("%A"),
-        "workout": workout,
-        "is_social": is_social,
-        "is_rest_day": workout is None,
-        "is_vacation": vacation,
-        "totals": totals,
-        "entries": entries,
-        "targets": {
-            "calories": targets["calories_max"],
-            "calories_adjusted": adjusted_calories,
-            "workout_calories": workout_cal,
-            "protein": targets["protein_target"],
-            "fiber": targets["fiber_target"],
-        },
-        "weight": today_weight,
-        "latest_weight": latest_weight,
-    }
+    return tools.compute_day(user_id, today)
 
 
 # ── Vacation ───────────────────────────────────
@@ -494,36 +431,9 @@ async def estimate_macros(req: ChatRequest, request: Request):
 async def get_analysis(request: Request, days: int = 7):
     user_id = require_auth(request)
     ref_date = get_client_date(request)
-    history = get_food_log_history(user_id, days, reference_date=ref_date)
-    targets = get_user_targets(user_id)
-
-    # Get workout calories for the date range
-    if history:
-        start = history[0]["log_date"]
-        end = history[-1]["log_date"]
-    else:
-        start = end = ref_date
-    workout_map = get_workouts_range(user_id, start, end)
-    drinks_map = get_drinks_range(user_id, start, end)
-    vacation_set = get_vacation_range(user_id, start, end)
-
-    # Add deficit and drink data to each day, mark vacations
-    base_cal = targets["tdee"]
-    for day in history:
-        day["is_vacation"] = day["log_date"] in vacation_set
-        wk_cal = workout_map.get(day["log_date"], 0)
-        day["workout_calories"] = wk_cal
-        day["adjusted_target"] = base_cal + wk_cal
-        day["deficit"] = day["total_cal"] - (base_cal + wk_cal)
-        dr = drinks_map.get(day["log_date"])
-        day["drinks"] = dr["count"] if dr else 0
-        day["drink_calories"] = dr["calories"] if dr else 0
-
-    # Filter out vacation days for metrics
+    h = tools.compute_history(user_id, days, ref_date)
+    history, targets, weight_data = h["history"], h["targets"], h["weight"]
     active_history = [d for d in history if not d["is_vacation"]]
-
-    # Weight data for the period
-    weight_data = get_weight_range(user_id, start, end)
 
     return {
         "user_id": user_id,

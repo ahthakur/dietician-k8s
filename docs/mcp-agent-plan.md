@@ -1,6 +1,6 @@
 # Plan: Dietician Pal via Claude (MCP Connector)
 
-**Status:** Planning only. Nothing built yet.
+**Status:** Phase 1 (ownership fixes) shipped 2026-11-23. Phase 2 (`tools.py`) built 2026-11-23, not yet exposed over MCP.
 **Drafted:** 2026-10-02
 
 ## Why
@@ -64,8 +64,8 @@ db.py (existing functions)  ──  SQLite
 
 | Tool | Inputs | Notes |
 |---|---|---|
-| `log_food` | `items: [{description, quantity, calories, protein, fiber}]`, `date?`, `source: photo\|text` | Takes a list, so one plate becomes one call. Also calls `save_quick_log`. Returns the updated day |
-| `update_food` | `entry_id`, any of `description/quantity/calories/protein/fiber` | Corrections |
+| `log_food` | `items: [{description, portion?, calories, protein, fiber}]`, `date?`, `source: photo\|text` | Takes a list, so one plate becomes one call. `portion` is free text appended to the description ("1 cup"). Validates every item before writing anything (calories 0–5000 per item). Also calls `save_quick_log`. Returns the updated day |
+| `update_food` | `entry_id`, any of `description/calories/protein/fiber` | Corrections. No `quantity`: the DB column is a display multiplier that totals ignore, so Claude passes scaled numbers |
 | `delete_food` | `entry_id` | |
 
 ### Body and workouts
