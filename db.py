@@ -214,7 +214,8 @@ def add_fridge_items_bulk(user_id, items):
     finally:
         conn.close()
 
-def update_fridge_item(item_id, name=None, quantity=None, category=None):
+def update_fridge_item(fridge_id, item_id, name=None, quantity=None, category=None):
+    """Update a fridge item, scoped to fridge_id. Returns True if a row was updated."""
     conn = get_conn()
     updates, vals = [], []
     if name is not None:
@@ -223,11 +224,15 @@ def update_fridge_item(item_id, name=None, quantity=None, category=None):
         updates.append("quantity = ?"); vals.append(quantity)
     if category is not None:
         updates.append("category = ?"); vals.append(category)
-    if updates:
-        vals.append(item_id)
-        conn.execute(f"UPDATE fridge_items SET {', '.join(updates)} WHERE id = ?", vals)
-        conn.commit()
+    if not updates:
+        row = conn.execute("SELECT 1 FROM fridge_items WHERE id = ? AND user_id = ?", (item_id, fridge_id)).fetchone()
+        conn.close()
+        return row is not None
+    vals.extend([item_id, fridge_id])
+    cur = conn.execute(f"UPDATE fridge_items SET {', '.join(updates)} WHERE id = ? AND user_id = ?", vals)
+    conn.commit()
     conn.close()
+    return cur.rowcount > 0
 
 def remove_fridge_item(user_id, name):
     conn = get_conn()
@@ -235,11 +240,13 @@ def remove_fridge_item(user_id, name):
     conn.commit()
     conn.close()
 
-def remove_fridge_item_by_id(item_id):
+def remove_fridge_item_by_id(fridge_id, item_id):
+    """Delete a fridge item, scoped to fridge_id. Returns True if a row was deleted."""
     conn = get_conn()
-    conn.execute("DELETE FROM fridge_items WHERE id = ?", (item_id,))
+    cur = conn.execute("DELETE FROM fridge_items WHERE id = ? AND user_id = ?", (item_id, fridge_id))
     conn.commit()
     conn.close()
+    return cur.rowcount > 0
 
 def clear_fridge(user_id):
     conn = get_conn()
@@ -269,24 +276,33 @@ def get_food_log(log_date, user_id):
     conn.close()
     return [dict(r) for r in rows]
 
-def delete_food_log_entry(entry_id):
+def delete_food_log_entry(user_id, entry_id):
+    """Delete a food log entry owned by user_id. Returns True if a row was deleted."""
     conn = get_conn()
-    conn.execute("DELETE FROM food_log WHERE id = ?", (entry_id,))
+    cur = conn.execute("DELETE FROM food_log WHERE id = ? AND user_id = ?", (entry_id, user_id))
     conn.commit()
     conn.close()
+    return cur.rowcount > 0
 
-def update_food_log_entry(entry_id, calories, protein, fiber=0, description=None, quantity=None):
+def food_log_entry_exists(user_id, entry_id):
     conn = get_conn()
-    if description is not None and quantity is not None:
-        conn.execute("UPDATE food_log SET calories = ?, protein = ?, fiber = ?, description = ?, quantity = ? WHERE id = ?", (calories, protein, fiber, description, quantity, entry_id))
-    elif description is not None:
-        conn.execute("UPDATE food_log SET calories = ?, protein = ?, fiber = ?, description = ? WHERE id = ?", (calories, protein, fiber, description, entry_id))
-    elif quantity is not None:
-        conn.execute("UPDATE food_log SET calories = ?, protein = ?, fiber = ?, quantity = ? WHERE id = ?", (calories, protein, fiber, quantity, entry_id))
-    else:
-        conn.execute("UPDATE food_log SET calories = ?, protein = ?, fiber = ? WHERE id = ?", (calories, protein, fiber, entry_id))
+    row = conn.execute("SELECT 1 FROM food_log WHERE id = ? AND user_id = ?", (entry_id, user_id)).fetchone()
+    conn.close()
+    return row is not None
+
+def update_food_log_entry(user_id, entry_id, calories, protein, fiber=0, description=None, quantity=None):
+    """Update a food log entry owned by user_id. Returns True if a row was updated."""
+    sets, vals = ["calories = ?", "protein = ?", "fiber = ?"], [calories, protein, fiber]
+    if description is not None:
+        sets.append("description = ?"); vals.append(description)
+    if quantity is not None:
+        sets.append("quantity = ?"); vals.append(quantity)
+    vals.extend([entry_id, user_id])
+    conn = get_conn()
+    cur = conn.execute(f"UPDATE food_log SET {', '.join(sets)} WHERE id = ? AND user_id = ?", vals)
     conn.commit()
     conn.close()
+    return cur.rowcount > 0
 
 def get_food_log_totals(log_date, user_id):
     conn = get_conn()

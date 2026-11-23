@@ -32,7 +32,7 @@ from db import (
     remove_fridge_item, remove_fridge_item_by_id, clear_fridge,
     update_fridge_item,
     get_fridge_id, set_fridge_group, get_fridge_group_members, migrate_fridge_items,
-    add_food_log_entry, get_food_log, delete_food_log_entry,
+    add_food_log_entry, get_food_log, delete_food_log_entry, food_log_entry_exists,
     update_food_log_entry, get_food_log_totals, get_food_log_history,
     check_food_log_for_keyword,
     ack_reminder,
@@ -446,13 +446,16 @@ async def direct_food_log(req: DirectFoodLogRequest, request: Request):
 
 @app.delete("/api/food-log/{entry_id}")
 async def remove_food_log(entry_id: int, request: Request):
-    require_auth(request)
-    delete_food_log_entry(entry_id)
+    user_id = require_auth(request)
+    if not delete_food_log_entry(user_id, entry_id):
+        raise HTTPException(status_code=404, detail="Entry not found")
     return {"status": "deleted"}
 
 @app.put("/api/food-log/{entry_id}")
 async def edit_food_log(entry_id: int, req: UpdateFoodLogRequest, request: Request):
     user_id = require_auth(request)
+    if not food_log_entry_exists(user_id, entry_id):
+        raise HTTPException(status_code=404, detail="Entry not found")
     if req.re_estimate and req.description:
         if not ANTHROPIC_API_KEY:
             raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
@@ -461,7 +464,7 @@ async def edit_food_log(entry_id: int, req: UpdateFoodLogRequest, request: Reque
             cal = result.get("calories", 0)
             prot = result.get("protein", 0)
             fib = result.get("fiber", 0)
-            update_food_log_entry(entry_id, cal, prot, fib, description=req.description)
+            update_food_log_entry(user_id, entry_id, cal, prot, fib, description=req.description)
             return {"status": "re_estimated", "calories": cal, "protein": prot, "fiber": fib}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -469,7 +472,7 @@ async def edit_food_log(entry_id: int, req: UpdateFoodLogRequest, request: Reque
         cal = req.calories or 0
         prot = req.protein or 0
         fib = req.fiber or 0
-        update_food_log_entry(entry_id, cal, prot, fib, description=req.description, quantity=req.quantity)
+        update_food_log_entry(user_id, entry_id, cal, prot, fib, description=req.description, quantity=req.quantity)
         return {"status": "updated"}
 
 
@@ -612,8 +615,9 @@ async def bulk_add_fridge(req: BulkFridgeRequest, request: Request):
 
 @app.put("/api/fridge/{item_id}")
 async def update_fridge(item_id: int, req: UpdateFridgeItemRequest, request: Request):
-    require_auth(request)
-    update_fridge_item(item_id, req.name, req.quantity, req.category)
+    user_id = require_auth(request)
+    if not update_fridge_item(get_fridge_id(user_id), item_id, req.name, req.quantity, req.category):
+        raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "updated"}
 
 @app.delete("/api/fridge/{item_name}")
@@ -625,8 +629,9 @@ async def remove_from_fridge(item_name: str, request: Request):
 
 @app.delete("/api/fridge/id/{item_id}")
 async def remove_fridge_by_id(item_id: int, request: Request):
-    require_auth(request)
-    remove_fridge_item_by_id(item_id)
+    user_id = require_auth(request)
+    if not remove_fridge_item_by_id(get_fridge_id(user_id), item_id):
+        raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "removed"}
 
 @app.delete("/api/fridge")
