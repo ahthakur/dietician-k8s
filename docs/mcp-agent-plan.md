@@ -1,6 +1,6 @@
 # Plan: Dietician Pal via Claude (MCP Connector)
 
-**Status:** Phase 1 (ownership fixes) shipped 2026-11-23. Phase 2 (`tools.py`) built 2026-11-23, not yet exposed over MCP.
+**Status:** Phase 1 (ownership fixes) shipped 2026-11-23. Phase 2 (`tools.py`) shipped 2026-11-23. Phase 3 (`mcp_server.py`, `/mcp` on `mcp` 2.3.0, stateless Streamable HTTP) built 2026-11-23; accepts only an env dev token until phase 4 adds the authorization server. Claude connector callback: `https://claude.ai/api/mcp/auth_callback`.
 **Drafted:** 2026-10-02
 
 ## Why

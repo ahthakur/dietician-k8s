@@ -21,6 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 
 import tools
+import mcp_server
 from config import HOST, PORT, ANTHROPIC_API_KEY, WORKOUTS, SOCIAL_DAYS, SESSION_SECRET, SYNC_TOKEN
 from auth import login as auth_login, callback as auth_callback, me as auth_me, logout as auth_logout, require_auth
 from db import get_user, update_user_targets, update_user_timezone
@@ -47,13 +48,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelna
 logger = logging.getLogger("dietician.server")
 
 
+mcp_app = mcp_server.build_app()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialized")
     if not ANTHROPIC_API_KEY:
         logger.warning("ANTHROPIC_API_KEY not set")
-    yield
+    async with mcp_server.mcp.session_manager.run():
+        yield
 
 app = FastAPI(title="Personal Dietician", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
@@ -638,6 +643,11 @@ if os.path.exists(static_dir):
     @app.get("/")
     async def serve_frontend():
         return FileResponse(os.path.join(static_dir, "index.html"), headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
+# ── MCP endpoint (/mcp + /.well-known/oauth-protected-resource/mcp) ──
+# Mounted last so every route above takes precedence.
+app.mount("/", mcp_app)
 
 
 if __name__ == "__main__":
