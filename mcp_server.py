@@ -4,39 +4,32 @@ Exposes the 12 functions in tools.py over Streamable HTTP at /mcp. The caller's
 user_id comes only from the verified bearer token (AccessToken.subject), never from
 tool arguments.
 
-Auth status: the SDK acts as the OAuth *resource server* here. It serves
-/.well-known/oauth-protected-resource/mcp and answers unauthenticated requests
-with 401 + WWW-Authenticate. Issuing tokens (the authorization server, signing in
-with Google) is phase 4. Until then the only accepted token is an optional dev
-token from the environment, for local testing:
-
-    MCP_DEV_TOKEN=<long random string> MCP_DEV_USER=<google sub>
-
-With neither set, every request is rejected.
+Auth: mcp_auth.py is the OAuth authorization server (Google sign-in + consent),
+plugged in through the SDK's auth_server_provider. The SDK serves the OAuth endpoints
+and protected-resource metadata, and answers unauthenticated /mcp requests with
+401 + WWW-Authenticate.
 """
 
-import hmac
 import logging
-import os
 from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.auth.provider import AccessToken
-from mcp.server.auth.settings import AuthSettings
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.mcpserver.exceptions import ToolError as MCPToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
+import mcp_auth
 import tools
 from config import BASE_URL
 
 logger = logging.getLogger("dietician.mcp")
 
 MCP_PATH = "/mcp"
-RESOURCE_URL = f"{BASE_URL.rstrip('/')}{MCP_PATH}"
+RESOURCE_URL = mcp_auth.RESOURCE_URL
 
 INSTRUCTIONS = """Dietician tools for one person's food diary, macro targets (calories,
 protein, fiber), workouts, weight and shared household fridge. Never guess the user's
@@ -46,18 +39,6 @@ user's timezone."""
 
 
 # ── Auth ─────────────────────────────────────────
-
-class DieticianTokenVerifier:
-    """Phase 3: accepts only the env dev token. Phase 4 replaces this with issued tokens."""
-
-    async def verify_token(self, token: str) -> AccessToken | None:
-        dev_token = os.environ.get("MCP_DEV_TOKEN", "")
-        dev_user = os.environ.get("MCP_DEV_USER", "")
-        if len(dev_token) >= 32 and dev_user and hmac.compare_digest(token, dev_token):
-            return AccessToken(token=token, client_id="dev", scopes=["dietician"],
-                               resource=RESOURCE_URL, subject=dev_user)
-        return None
-
 
 def _user_id() -> str:
     tok = get_access_token()
@@ -81,13 +62,14 @@ _host = urlparse(BASE_URL).netloc
 mcp = MCPServer(
     "Dietician",
     instructions=INSTRUCTIONS,
-    token_verifier=DieticianTokenVerifier(),
+    auth_server_provider=mcp_auth.provider,
     auth=AuthSettings(
-        # Phase 4 hosts the authorization server on this same origin.
-        issuer_url=BASE_URL,
+        issuer_url=mcp_auth.ISSUER,
         resource_server_url=RESOURCE_URL,
-        required_scopes=["dietician"],
+        required_scopes=[mcp_auth.SCOPE],
         validate_token_resource=True,
+        client_registration_options=ClientRegistrationOptions(enabled=False, valid_scopes=[mcp_auth.SCOPE]),
+        revocation_options=RevocationOptions(enabled=True),
     ),
 )
 
@@ -220,8 +202,8 @@ def remove_fridge_items(names: list[str]) -> dict:
 # ── ASGI app ─────────────────────────────────────
 
 def build_app():
-    """The Starlette app serving /mcp and its protected-resource metadata."""
-    return mcp.streamable_http_app(
+    """Starlette app: /mcp, OAuth endpoints, and both well-known metadata documents."""
+    app = mcp.streamable_http_app(
         streamable_http_path=MCP_PATH,
         stateless_http=True,
         json_response=True,
@@ -231,3 +213,4 @@ def build_app():
             allowed_origins=[f"https://{_host}", "https://claude.ai", "http://127.0.0.1:*", "http://localhost:*"],
         ),
     )
+    return mcp_auth.token_auth_method_shim(app)

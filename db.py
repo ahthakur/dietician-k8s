@@ -153,6 +153,36 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
+
+        -- MCP connector OAuth (mcp_auth.py). Codes and tokens are stored as SHA-256 hashes.
+        CREATE TABLE IF NOT EXISTS mcp_auth_requests (
+            id TEXT PRIMARY KEY,
+            client_id TEXT NOT NULL,
+            params TEXT NOT NULL,
+            expires_at REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS mcp_auth_codes (
+            code_hash TEXT PRIMARY KEY,
+            client_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            data TEXT NOT NULL,
+            expires_at REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS mcp_tokens (
+            token_hash TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,              -- 'access' | 'refresh'
+            grant_id TEXT NOT NULL,          -- ties an access/refresh pair to one sign-in
+            client_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            scopes TEXT NOT NULL,
+            resource TEXT,
+            expires_at INTEGER NOT NULL,
+            used INTEGER DEFAULT 0,          -- refresh token already rotated
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_mcp_tokens_grant ON mcp_tokens(grant_id);
     """)
 
     for col_sql in [

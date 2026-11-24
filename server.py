@@ -21,6 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 
 import tools
+import mcp_auth
 import mcp_server
 from config import HOST, PORT, ANTHROPIC_API_KEY, WORKOUTS, SOCIAL_DAYS, SESSION_SECRET, SYNC_TOKEN
 from auth import login as auth_login, callback as auth_callback, me as auth_me, logout as auth_logout, require_auth
@@ -84,6 +85,8 @@ def get_client_date(request: Request, fallback: Optional[str] = None) -> str:
 
 app.get("/auth/login")(auth_login)
 app.get("/auth/callback")(auth_callback)
+app.get(mcp_auth.CONSENT_PATH)(mcp_auth.consent_get)
+app.post(mcp_auth.CONSENT_PATH)(mcp_auth.consent_post)
 app.get("/auth/me")(auth_me)
 app.get("/auth/logout")(auth_logout)
 
@@ -645,7 +648,7 @@ if os.path.exists(static_dir):
         return FileResponse(os.path.join(static_dir, "index.html"), headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
-# ── MCP endpoint (/mcp + /.well-known/oauth-protected-resource/mcp) ──
+# ── MCP endpoint: /mcp, OAuth (/authorize, /token, /revoke) and .well-known metadata ──
 # Mounted last so every route above takes precedence.
 app.mount("/", mcp_app)
 

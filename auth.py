@@ -40,7 +40,11 @@ async def callback(request: Request):
     )
 
     request.session["user_id"] = user_info["sub"]
-    return RedirectResponse("/")
+    # Return to the MCP consent page if sign-in started there (mcp_auth.consent_get).
+    nxt = request.session.pop("next", "")
+    if not (nxt.startswith("/mcp-auth/") and "//" not in nxt):
+        nxt = "/"
+    return RedirectResponse(nxt)
 
 
 async def me(request: Request):
