@@ -9,3 +9,5 @@ OAuth-client.json
 test-results/
 skills-lock.json
 .pytest_cache/
+.DS_Store
+.agents/
